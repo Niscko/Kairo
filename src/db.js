@@ -179,8 +179,18 @@ CREATE TABLE IF NOT EXISTS turnos (
   hora_fin TEXT NOT NULL,
   area TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS recuperaciones (
+  id INTEGER PRIMARY KEY,
+  usuario_id INTEGER NOT NULL REFERENCES usuarios(id),
+  codigo_hash TEXT NOT NULL,
+  creado INTEGER NOT NULL,
+  expira INTEGER NOT NULL,
+  intentos INTEGER NOT NULL DEFAULT 0,
+  usado INTEGER NOT NULL DEFAULT 0
+);
 CREATE INDEX IF NOT EXISTS idx_reservas_espacio ON reservas (espacio_id, inicio, fin);
 CREATE INDEX IF NOT EXISTS idx_ventas_fecha ON ventas (fecha);
+CREATE INDEX IF NOT EXISTS idx_recuperaciones_usuario ON recuperaciones (usuario_id, usado);
 `;
 
 function mulberry32(seed) {
@@ -856,6 +866,26 @@ function openDatabase() {
       removeDatabaseFiles();
       throw error;
     }
+  }
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS recuperaciones (
+      id INTEGER PRIMARY KEY,
+      usuario_id INTEGER NOT NULL REFERENCES usuarios(id),
+      codigo_hash TEXT NOT NULL,
+      creado INTEGER NOT NULL,
+      expira INTEGER NOT NULL,
+      intentos INTEGER NOT NULL DEFAULT 0,
+      usado INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS idx_recuperaciones_usuario ON recuperaciones (usuario_id, usado);
+  `);
+  const inactiveEmail = "inactivo@kairo.local";
+  if (!db.prepare(`SELECT id FROM usuarios WHERE email = ?`).get(inactiveEmail)) {
+    const hash = bcrypt.hashSync("kairo123", 8);
+    const userId = db.prepare(
+      `INSERT INTO usuarios (nombre, email, password_hash, rol, telefono, activo) VALUES (?, ?, ?, 'cliente', ?, 0)`
+    ).run("Inés Mora", inactiveEmail, hash, "3005103399").lastInsertRowid;
+    db.prepare(`INSERT INTO clientes (usuario_id, documento, membresia) VALUES (?, ?, 'ninguna')`).run(userId, "1002003099");
   }
   return db;
 }

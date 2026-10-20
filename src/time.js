@@ -67,6 +67,91 @@ function monthBounds(date = new Date()) {
   };
 }
 
+function parseISODate(iso) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(iso || "")) return null;
+  const [year, month, day] = iso.split("-").map(Number);
+  const date = new Date(year, month - 1, day);
+  if (dateISO(date) !== iso) return null;
+  return date;
+}
+
+function daysBetween(startStamp, endStamp) {
+  return Math.round((parseStamp(endStamp) - parseStamp(startStamp)) / 86400000);
+}
+
+function resolvePeriod({ rango, desde, hasta }, now = new Date()) {
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const tomorrow = addDays(today, 1);
+  const key = ["hoy", "7d", "21d", "mes", "custom"].includes(rango) ? rango : "mes";
+
+  if (key === "hoy") {
+    return { key, label: "Hoy", start: dayStamp(today, "00:00"), end: dayStamp(tomorrow, "00:00"), days: 1 };
+  }
+  if (key === "7d") {
+    const start = addDays(today, -6);
+    return { key, label: "Últimos 7 días", start: dayStamp(start, "00:00"), end: dayStamp(tomorrow, "00:00"), days: 7 };
+  }
+  if (key === "21d") {
+    const start = addDays(today, -20);
+    return { key, label: "Últimos 21 días", start: dayStamp(start, "00:00"), end: dayStamp(tomorrow, "00:00"), days: 21 };
+  }
+  if (key === "custom") {
+    const startDate = parseISODate(desde);
+    const endDate = parseISODate(hasta);
+    if (!startDate || !endDate) {
+      const error = new Error("Indica una fecha inicial y una final");
+      error.status = 400;
+      throw error;
+    }
+    if (startDate > endDate) {
+      const error = new Error("La fecha inicial no puede ser posterior a la final");
+      error.status = 400;
+      throw error;
+    }
+    const end = addDays(endDate, 1);
+    const days = Math.round((end - startDate) / 86400000);
+    if (days > 90) {
+      const error = new Error("El rango máximo es de 90 días");
+      error.status = 400;
+      throw error;
+    }
+    const startISO = dateISO(startDate);
+    const endISO = dateISO(endDate);
+    return {
+      key,
+      label: startISO === endISO ? startISO : `${startISO} a ${endISO}`,
+      start: dayStamp(startDate, "00:00"),
+      end: dayStamp(end, "00:00"),
+      days,
+    };
+  }
+  const month = monthBounds(today);
+  return { key: "mes", label: `Mes ${month.periodo}`, ...month };
+}
+
+function eachDay(startStamp, endStamp) {
+  const days = [];
+  let cursor = parseISODate(startStamp.slice(0, 10));
+  const last = parseStamp(endStamp);
+  while (cursor < last) {
+    days.push(dateISO(cursor));
+    cursor = addDays(cursor, 1);
+  }
+  return days;
+}
+
+function prorateAmount(amount, monthPeriod, rangeStart, rangeEnd) {
+  const [year, month] = monthPeriod.split("-").map(Number);
+  const monthStart = dayStamp(new Date(year, month - 1, 1), "00:00");
+  const monthEnd = dayStamp(new Date(year, month, 1), "00:00");
+  const overlapStart = rangeStart > monthStart ? rangeStart : monthStart;
+  const overlapEnd = rangeEnd < monthEnd ? rangeEnd : monthEnd;
+  if (overlapStart >= overlapEnd) return 0;
+  const monthDays = daysBetween(monthStart, monthEnd);
+  const overlapDays = daysBetween(overlapStart, overlapEnd);
+  return amount * (overlapDays / monthDays);
+}
+
 function overlaps(inicioA, finA, inicioB, finB) {
   return inicioA < finB && finA > inicioB;
 }
@@ -78,11 +163,15 @@ module.exports = {
   addDays,
   dayStamp,
   parseStamp,
+  parseISODate,
   normalizeInput,
   hoursBetween,
   sameDay,
   withinService,
   validMinutes,
   monthBounds,
+  resolvePeriod,
+  eachDay,
+  prorateAmount,
   overlaps,
 };

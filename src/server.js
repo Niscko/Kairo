@@ -1,4 +1,5 @@
 const path = require("path");
+const crypto = require("crypto");
 const express = require("express");
 const session = require("express-session");
 const bcrypt = require("bcryptjs");
@@ -13,6 +14,10 @@ const {
   withinService,
   validMinutes,
   monthBounds,
+  resolvePeriod,
+  eachDay,
+  prorateAmount,
+  parseISODate,
 } = require("./time");
 const { montoReserva } = require("./domain");
 
@@ -40,19 +45,138 @@ function wrap(handler) {
   return (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
 }
 
+function say(req, es, en) {
+  const header = String(req.headers["accept-language"] || "");
+  return header.toLowerCase().startsWith("en") ? en : es;
+}
+
+const DUMMY_HASH = bcrypt.hashSync("kairo-placeholder", 8);
+
+function rejectSignedOut(req, res) {
+  const inactive = Boolean(req.session.user);
+  const message = inactive
+    ? say(req, "Tu cuenta está inactiva", "Your account is inactive")
+    : say(req, "Inicia sesión para continuar", "Sign in to continue");
+  if (inactive) req.session.destroy(() => {});
+  res.status(401).json({ error: message });
+}
+
+function currentUser(req) {
+  if (!req.session.user) return null;
+  const fresh = loadSession(req.session.user.id);
+  if (!fresh) return null;
+  req.session.user = fresh;
+  return fresh;
+}
+
 function requireAuth(req, res, next) {
-  if (!req.session.user) return res.status(401).json({ error: "Inicia sesión para continuar" });
+  if (!currentUser(req)) return rejectSignedOut(req, res);
   next();
 }
 
 function requireRole(...roles) {
   return (req, res, next) => {
-    if (!req.session.user) return res.status(401).json({ error: "Inicia sesión para continuar" });
+    if (!currentUser(req)) return rejectSignedOut(req, res);
     if (!roles.includes(req.session.user.rol)) {
-      return res.status(403).json({ error: "No tienes permiso para esta acción" });
+      return res.status(403).json({ error: say(req, "No tienes permiso para esta acción", "You do not have permission for this action") });
     }
     next();
   };
+}
+
+function validEmail(email) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email);
+}
+
+function validName(nombre) {
+  return nombre.length >= 3 && nombre.length <= 80 && /^[\p{L}][\p{L}\s'.-]*[\p{L}.]$/u.test(nombre);
+}
+
+function validPhone(value) {
+  if (!/^[+\d\s()-]{7,20}$/.test(value)) return false;
+  const digits = value.replace(/\D/g, "");
+  return digits.length >= 7 && digits.length <= 15;
+}
+
+function validDoc(value) {
+  return /^[A-Za-z0-9.-]{5,20}$/.test(value);
+}
+
+function passwordIssues(password, email) {
+  const issues = [];
+  if (typeof password !== "string" || password.length < 8 || password.length > 72) issues.push("length");
+  if (!/[a-z]/.test(password) || !/[A-Z]/.test(password)) issues.push("case");
+  if (!/\d/.test(password)) issues.push("digit");
+  if (/\s/.test(password) || !/[^A-Za-z0-9]/.test(password)) issues.push("symbol");
+  const local = String(email || "").split("@")[0].toLowerCase();
+  if (local.length >= 3 && password.toLowerCase().includes(local)) issues.push("email");
+  return issues;
+}
+
+function assertPassword(req, password, confirmacion, email) {
+  if (password !== confirmacion) {
+    throw business(say(req, "La confirmación no coincide con la clave", "The confirmation does not match the password"));
+  }
+  if (passwordIssues(password, email).length) {
+    throw business(say(
+      req,
+      "La clave debe tener entre 8 y 72 caracteres, con mayúscula, minúscula, número y un símbolo, sin espacios y sin incluir el correo.",
+      "The password must be 8 to 72 characters and include an uppercase letter, a lowercase letter, a number, and a symbol, with no spaces and without the email."
+    ));
+  }
+}
+
+function readNewAccount(req, { publicClient = false } = {}) {
+  const nombre = text(req.body.nombre, 80);
+  const email = text(req.body.email, 120).toLowerCase();
+  const password = typeof req.body.password === "string" ? req.body.password : "";
+  const confirmacion = typeof req.body.confirmacion === "string" ? req.body.confirmacion : "";
+  const telefono = text(req.body.telefono, 20);
+  const documento = text(req.body.documento, 20);
+  const rol = publicClient ? "cliente" : req.body.rol;
+  if (!validName(nombre)) {
+    throw business(say(req, "Escribe un nombre completo, solo con letras.", "Enter a full name using letters only."));
+  }
+  if (!validEmail(email)) throw business(say(req, "El correo no es válido", "The email is not valid"));
+  assertPassword(req, password, confirmacion, email);
+  if (telefono && !validPhone(telefono)) throw business(say(req, "El teléfono no es válido", "The phone number is not valid"));
+  if (!["admin", "empleado", "cliente"].includes(rol)) throw business(say(req, "El rol no es válido", "The role is not valid"));
+  const account = { nombre, email, password, rol, telefono };
+  if (rol === "cliente") {
+    if (documento && !validDoc(documento)) throw business(say(req, "El documento no es válido", "The ID number is not valid"));
+    account.documento = documento;
+  }
+  if (rol === "empleado") {
+    const cargo = text(req.body.cargo, 40);
+    const salario = money(req.body.salario);
+    const fecha = /^\d{4}-\d{2}-\d{2}$/.test(req.body.fecha_ingreso || "") && parseISODate(req.body.fecha_ingreso) ? req.body.fecha_ingreso : null;
+    if (cargo.length < 2) throw business(say(req, "Indica el cargo", "Enter the job title"));
+    if (salario === null || salario <= 0) throw business(say(req, "El salario no es válido", "The salary is not valid"));
+    if (!fecha) throw business(say(req, "La fecha de ingreso no es válida", "The start date is not valid"));
+    account.cargo = cargo;
+    account.salario = salario;
+    account.fecha_ingreso = fecha;
+  }
+  return account;
+}
+
+function insertAccount(account) {
+  const hash = bcrypt.hashSync(account.password, 8);
+  const tx = db.transaction(() => {
+    const userId = db.prepare(
+      `INSERT INTO usuarios (nombre, email, password_hash, rol, telefono, activo) VALUES (?, ?, ?, ?, ?, 1)`
+    ).run(account.nombre, account.email, hash, account.rol, account.telefono || null).lastInsertRowid;
+    if (account.rol === "cliente") {
+      db.prepare(`INSERT INTO clientes (usuario_id, documento, membresia) VALUES (?, ?, 'ninguna')`).run(userId, account.documento || null);
+    }
+    if (account.rol === "empleado") {
+      db.prepare(
+        `INSERT INTO empleados (usuario_id, cargo, salario, fecha_ingreso, activo) VALUES (?, ?, ?, ?, 1)`
+      ).run(userId, account.cargo, account.salario, account.fecha_ingreso);
+    }
+    return Number(userId);
+  });
+  return tx();
 }
 
 function text(value, max = 180) {
@@ -275,27 +399,11 @@ function loadExperiencias() {
 }
 
 app.post("/api/registro", wrap((req, res) => {
-  const nombre = text(req.body.nombre, 80);
-  const email = text(req.body.email, 120).toLowerCase();
-  const password = typeof req.body.password === "string" ? req.body.password : "";
-  const telefono = text(req.body.telefono, 20);
-  const documento = text(req.body.documento, 20);
-  if (nombre.length < 3) throw business("Escribe el nombre completo");
-  if (!email.includes("@") || email.endsWith("@") || email.startsWith("@")) throw business("El correo no es válido");
-  if (password.length < 6) throw business("La clave debe tener al menos 6 caracteres");
-  const exists = db.prepare(`SELECT id FROM usuarios WHERE email = ?`).get(email);
-  if (exists) throw business("Ese correo ya está registrado");
-  const hash = bcrypt.hashSync(password, 8);
-  const tx = db.transaction(() => {
-    const userId = db.prepare(
-      `INSERT INTO usuarios (nombre, email, password_hash, rol, telefono) VALUES (?, ?, ?, 'cliente', ?)`
-    ).run(nombre, email, hash, telefono || null).lastInsertRowid;
-    db.prepare(
-      `INSERT INTO clientes (usuario_id, documento, membresia) VALUES (?, ?, 'ninguna')`
-    ).run(userId, documento || null);
-    return userId;
-  });
-  req.session.user = loadSession(tx());
+  const account = readNewAccount(req, { publicClient: true });
+  if (db.prepare(`SELECT id FROM usuarios WHERE email = ?`).get(account.email)) {
+    throw business(say(req, "Ese correo ya está registrado", "That email is already registered"));
+  }
+  req.session.user = loadSession(insertAccount(account));
   res.status(201).json({ user: req.session.user });
 }));
 
@@ -303,8 +411,16 @@ app.post("/api/login", wrap((req, res) => {
   const email = text(req.body.email, 120).toLowerCase();
   const password = typeof req.body.password === "string" ? req.body.password : "";
   const user = db.prepare(`SELECT * FROM usuarios WHERE email = ?`).get(email);
-  if (!user || !user.activo || !bcrypt.compareSync(password, user.password_hash)) {
-    throw business("Correo o clave incorrectos", 401);
+  const matches = bcrypt.compareSync(password, user ? user.password_hash : DUMMY_HASH);
+  if (!user || !matches) {
+    throw business(say(req, "Correo o clave incorrectos", "Incorrect email or password"), 401);
+  }
+  if (!user.activo) {
+    throw business(say(
+      req,
+      "Esta cuenta está inactiva. Pide a dirección que la reactive.",
+      "This account is inactive. Ask management to reactivate it."
+    ), 403);
   }
   req.session.user = loadSession(user.id);
   res.json({ user: req.session.user });
@@ -315,9 +431,130 @@ app.post("/api/logout", (req, res) => {
 });
 
 app.get("/api/me", (req, res) => {
-  if (!req.session.user) return res.status(401).json({ error: "Inicia sesión para continuar" });
+  if (!currentUser(req)) return rejectSignedOut(req, res);
   res.json(req.session.user);
 });
+
+app.post("/api/recuperar", wrap((req, res) => {
+  const email = text(req.body.email, 120).toLowerCase();
+  const generic = say(
+    req,
+    "Si el correo pertenece a una cuenta activa, el código aparece en la bandeja simulada.",
+    "If the email belongs to an active account, the code appears in the simulated inbox."
+  );
+  if (!validEmail(email)) throw business(say(req, "El correo no es válido", "The email is not valid"));
+  const user = db.prepare(`SELECT id, activo FROM usuarios WHERE email = ?`).get(email);
+  let codigo = null;
+  if (user && user.activo) {
+    const now = Date.now();
+    const latest = db.prepare(`SELECT creado FROM recuperaciones WHERE usuario_id = ? ORDER BY id DESC LIMIT 1`).get(user.id);
+    if (latest && now - latest.creado < 60 * 1000) {
+      throw business(say(req, "Espera un minuto antes de pedir otro código", "Wait a minute before requesting another code"), 429);
+    }
+    codigo = String(crypto.randomInt(0, 1000000)).padStart(6, "0");
+    db.prepare(`UPDATE recuperaciones SET usado = 1 WHERE usuario_id = ? AND usado = 0`).run(user.id);
+    db.prepare(
+      `INSERT INTO recuperaciones (usuario_id, codigo_hash, creado, expira, intentos, usado) VALUES (?, ?, ?, ?, 0, 0)`
+    ).run(user.id, bcrypt.hashSync(codigo, 8), now, now + 15 * 60 * 1000);
+  }
+  res.json({ ok: true, mensaje: generic, correo_simulado: codigo });
+}));
+
+app.post("/api/recuperar/confirmar", wrap((req, res) => {
+  const email = text(req.body.email, 120).toLowerCase();
+  const codigo = text(req.body.codigo, 8);
+  const password = typeof req.body.password === "string" ? req.body.password : "";
+  const confirmacion = typeof req.body.confirmacion === "string" ? req.body.confirmacion : "";
+  const invalid = say(req, "El código no es válido o expiró", "The code is invalid or has expired");
+  if (!validEmail(email) || !/^\d{6}$/.test(codigo)) throw business(invalid);
+  const user = db.prepare(`SELECT * FROM usuarios WHERE email = ?`).get(email);
+  const rows = user
+    ? db.prepare(`SELECT * FROM recuperaciones WHERE usuario_id = ? AND usado = 0 AND expira > ? ORDER BY id DESC`).all(user.id, Date.now())
+    : [];
+  const match = rows.find((row) => bcrypt.compareSync(codigo, row.codigo_hash));
+  if (!user || !match) {
+    if (rows[0]) {
+      const attempts = rows[0].intentos + 1;
+      db.prepare(`UPDATE recuperaciones SET intentos = ?, usado = ? WHERE id = ?`).run(attempts, attempts >= 5 ? 1 : 0, rows[0].id);
+    }
+    throw business(invalid);
+  }
+  assertPassword(req, password, confirmacion, email);
+  if (bcrypt.compareSync(password, user.password_hash)) {
+    throw business(say(req, "La clave nueva debe ser distinta a la actual", "The new password must be different from the current one"));
+  }
+  db.prepare(`UPDATE usuarios SET password_hash = ? WHERE id = ?`).run(bcrypt.hashSync(password, 8), user.id);
+  db.prepare(`UPDATE recuperaciones SET usado = 1 WHERE usuario_id = ?`).run(user.id);
+  res.json({ ok: true });
+}));
+
+app.post("/api/cuenta/clave", requireAuth, wrap((req, res) => {
+  const actual = typeof req.body.actual === "string" ? req.body.actual : "";
+  const password = typeof req.body.password === "string" ? req.body.password : "";
+  const confirmacion = typeof req.body.confirmacion === "string" ? req.body.confirmacion : "";
+  const user = db.prepare(`SELECT * FROM usuarios WHERE id = ?`).get(req.session.user.id);
+  if (!user || !bcrypt.compareSync(actual, user.password_hash)) {
+    throw business(say(req, "La clave actual no es correcta", "The current password is incorrect"), 401);
+  }
+  assertPassword(req, password, confirmacion, user.email);
+  if (bcrypt.compareSync(password, user.password_hash)) {
+    throw business(say(req, "La clave nueva debe ser distinta a la actual", "The new password must be different from the current one"));
+  }
+  db.prepare(`UPDATE usuarios SET password_hash = ? WHERE id = ?`).run(bcrypt.hashSync(password, 8), user.id);
+  res.json({ ok: true });
+}));
+
+app.get("/api/usuarios", requireRole("admin"), wrap((req, res) => {
+  const usuarios = db.prepare(`
+    SELECT u.id, u.nombre, u.email, u.rol, u.telefono, u.activo, e.cargo
+    FROM usuarios u
+    LEFT JOIN empleados e ON e.usuario_id = u.id
+    ORDER BY u.activo DESC, u.nombre
+  `).all();
+  res.json({
+    usuarios: usuarios.map((usuario) => ({
+      id: usuario.id,
+      nombre: usuario.nombre,
+      email: usuario.email,
+      rol: usuario.rol,
+      telefono: usuario.telefono,
+      cargo: usuario.cargo,
+      activo: Boolean(usuario.activo),
+    })),
+  });
+}));
+
+app.post("/api/usuarios", requireRole("admin"), wrap((req, res) => {
+  const account = readNewAccount(req);
+  if (db.prepare(`SELECT id FROM usuarios WHERE email = ?`).get(account.email)) {
+    throw business(say(req, "Ese correo ya está registrado", "That email is already registered"));
+  }
+  const id = insertAccount(account);
+  res.status(201).json({ id });
+}));
+
+app.patch("/api/usuarios/:id", requireRole("admin"), wrap((req, res) => {
+  const id = whole(req.params.id);
+  if (!id || typeof req.body.activo !== "boolean") {
+    throw business(say(req, "Indica si la cuenta queda activa o inactiva", "Say whether the account should be active or inactive"));
+  }
+  const user = db.prepare(`SELECT * FROM usuarios WHERE id = ?`).get(id);
+  if (!user) throw business(say(req, "Usuario no encontrado", "User not found"), 404);
+  if (user.id === req.session.user.id && !req.body.activo) {
+    throw business(say(req, "No puedes desactivar tu propia cuenta", "You cannot deactivate your own account"));
+  }
+  const activo = req.body.activo ? 1 : 0;
+  if (user.rol === "admin" && user.activo && !activo) {
+    const others = db.prepare(`SELECT COUNT(*) AS n FROM usuarios WHERE rol = 'admin' AND activo = 1 AND id != ?`).get(id).n;
+    if (!others) throw business(say(req, "Debe quedar al menos una dirección activa", "At least one active manager must remain"));
+  }
+  const tx = db.transaction(() => {
+    db.prepare(`UPDATE usuarios SET activo = ? WHERE id = ?`).run(activo, id);
+    db.prepare(`UPDATE empleados SET activo = ? WHERE usuario_id = ?`).run(activo, id);
+  });
+  tx();
+  res.json({ ok: true, activo: Boolean(activo) });
+}));
 
 app.get("/api/dashboard", requireAuth, wrap((req, res) => {
   const hoy = dateISO(new Date());
@@ -510,7 +747,7 @@ app.get("/api/empleados", requireRole("admin", "empleado"), wrap((req, res) => {
   const empleados = db.prepare(`
     SELECT e.*, u.nombre, u.email, u.telefono
     FROM empleados e JOIN usuarios u ON u.id = e.usuario_id
-    WHERE e.activo = 1 ORDER BY u.nombre
+    WHERE e.activo = 1 AND u.activo = 1 ORDER BY u.nombre
   `).all();
   const admin = req.session.user.rol === "admin";
   res.json({
@@ -546,7 +783,10 @@ app.post("/api/turnos", requireRole("admin"), wrap((req, res) => {
   const area = text(req.body.area, 40);
   if (!empleadoId || !fecha || !horaInicio || !horaFin || !area) throw business("Completa el turno");
   if (horaInicio >= horaFin) throw business("La hora de fin debe ser posterior a la de inicio");
-  const empleado = db.prepare(`SELECT id FROM empleados WHERE id = ? AND activo = 1`).get(empleadoId);
+  const empleado = db.prepare(`
+    SELECT e.id FROM empleados e JOIN usuarios u ON u.id = e.usuario_id
+    WHERE e.id = ? AND e.activo = 1 AND u.activo = 1
+  `).get(empleadoId);
   if (!empleado) throw business("Empleado no encontrado", 404);
   const cruce = db.prepare(`
     SELECT id FROM turnos WHERE empleado_id = ? AND fecha = ? AND hora_inicio < ? AND hora_fin > ?
@@ -715,7 +955,10 @@ app.post("/api/experiencias", requireRole("admin", "empleado"), wrap((req, res) 
     }
     if (reservaCruzada(espacio.id, inicio, fin)) throw business("Ese espacio ya está reservado en ese horario");
     for (const empleadoId of empleados) {
-      const empleado = db.prepare(`SELECT id FROM empleados WHERE id = ? AND activo = 1`).get(empleadoId);
+      const empleado = db.prepare(`
+        SELECT e.id FROM empleados e JOIN usuarios u ON u.id = e.usuario_id
+        WHERE e.id = ? AND e.activo = 1 AND u.activo = 1
+      `).get(empleadoId);
       if (!empleado) throw business("Hay un empleado que no está activo");
       const cruce = db.prepare(`
         SELECT e.nombre FROM experiencia_empleados ee
@@ -907,11 +1150,20 @@ app.get("/api/proveedores", requireRole("admin", "empleado"), wrap((req, res) =>
 }));
 
 app.get("/api/reportes", requireRole("admin"), wrap((req, res) => {
-  const bounds = monthBounds();
+  let bounds;
+  try {
+    bounds = resolvePeriod({
+      rango: req.query.rango,
+      desde: req.query.desde,
+      hasta: req.query.hasta,
+    });
+  } catch (error) {
+    throw error.status ? error : business(error.message);
+  }
   const horasJornada = 16;
   const ventas = db.prepare(`SELECT COALESCE(SUM(total), 0) AS total FROM ventas WHERE fecha >= ? AND fecha < ?`).get(bounds.start, bounds.end).total;
   const reservas = db.prepare(`
-    SELECT monto, estado FROM reservas
+    SELECT monto, estado, inicio FROM reservas
     WHERE proposito != 'evento' AND estado != 'cancelada' AND inicio < ? AND fin > ?
   `).all(bounds.end, bounds.start);
   const reservasRealizadas = reservas.filter((item) => item.estado === "completada" || item.estado === "en_curso").reduce((sum, item) => sum + item.monto, 0);
@@ -920,7 +1172,7 @@ app.get("/api/reportes", requireRole("admin"), wrap((req, res) => {
   const experienciasRealizadas = experiencias.filter((item) => item.estado === "finalizada" || item.estado === "en_curso").reduce((sum, item) => sum + item.ingresos, 0);
   const experienciasPrevistas = experiencias.filter((item) => item.estado === "programada").reduce((sum, item) => sum + item.ingresos, 0);
   const items = db.prepare(`
-    SELECT vi.producto_id, vi.cantidad, vi.precio, p.nombre
+    SELECT vi.producto_id, vi.cantidad, vi.precio, p.nombre, v.fecha
     FROM venta_items vi
     JOIN ventas v ON v.id = vi.venta_id
     JOIN productos p ON p.id = vi.producto_id
@@ -935,12 +1187,16 @@ app.get("/api/reportes", requireRole("admin"), wrap((req, res) => {
     topMap.set(item.producto_id, current);
   }
   const topProductos = [...topMap.values()].sort((a, b) => b.ingresos - a.ingresos).slice(0, 6);
-  const costos = db.prepare(`SELECT * FROM costos WHERE periodo = ?`).all(bounds.periodo);
-  const costosFijos = costos.reduce((sum, item) => sum + item.monto, 0);
+  const meses = [...new Set(eachDay(bounds.start, bounds.end).map((dia) => dia.slice(0, 7)))];
+  const costos = db.prepare(
+    `SELECT * FROM costos WHERE periodo IN (${meses.map(() => "?").join(",")}) ORDER BY categoria, concepto`
+  ).all(...meses);
+  const costosFijos = Math.round(costos.reduce((sum, item) => sum + prorateAmount(item.monto, item.periodo, bounds.start, bounds.end), 0));
   const costoExperiencias = experiencias
     .filter((item) => item.estado === "finalizada" || item.estado === "en_curso")
     .reduce((sum, item) => sum + item.costo_productos, 0);
-  const ingresosRealizados = ventas + reservasRealizadas + experienciasRealizadas;
+  const ingresosTotal = ventas + reservasRealizadas + experienciasRealizadas;
+  const egresosTotal = costosFijos + costoInsumos + costoExperiencias;
   const espacios = db.prepare(`SELECT * FROM espacios`).all();
   const reservasMes = db.prepare(`
     SELECT espacio_id, inicio, fin FROM reservas
@@ -955,7 +1211,7 @@ app.get("/api/reportes", requireRole("admin"), wrap((req, res) => {
       nombre: espacio.nombre,
       tipo: espacio.tipo,
       horas: Math.round(horas * 10) / 10,
-      porcentaje: Math.round((horas / capacidad) * 1000) / 10,
+      porcentaje: capacidad ? Math.round((horas / capacidad) * 1000) / 10 : 0,
     };
   });
   const rentables = utilizacion.filter((item) => item.tipo === "puesto" || item.tipo === "sala");
@@ -977,14 +1233,64 @@ app.get("/api/reportes", requireRole("admin"), wrap((req, res) => {
     const bucket = demanda.find((item) => item.hora === hora);
     if (bucket) bucket.ventas += 1;
   }
+
+  const recetaCosto = new Map();
+  for (const line of db.prepare(`
+    SELECT r.producto_id, r.cantidad, i.costo_unitario
+    FROM recetas r JOIN insumos i ON i.id = r.insumo_id
+  `).all()) {
+    recetaCosto.set(line.producto_id, (recetaCosto.get(line.producto_id) || 0) + line.cantidad * line.costo_unitario);
+  }
+  const ventasPorDia = new Map();
+  const insumosPorDia = new Map();
+  for (const item of items) {
+    const dia = item.fecha.slice(0, 10);
+    ventasPorDia.set(dia, (ventasPorDia.get(dia) || 0) + item.precio * item.cantidad);
+    insumosPorDia.set(dia, (insumosPorDia.get(dia) || 0) + Math.round((recetaCosto.get(item.producto_id) || 0) * item.cantidad));
+  }
+  const reservasPorDia = new Map();
+  for (const reserva of reservas.filter((item) => item.estado === "completada" || item.estado === "en_curso")) {
+    const dia = reserva.inicio.slice(0, 10);
+    if (dia >= bounds.start.slice(0, 10) && dia < bounds.end.slice(0, 10)) {
+      reservasPorDia.set(dia, (reservasPorDia.get(dia) || 0) + reserva.monto);
+    }
+  }
+  const fijoPorDia = bounds.days ? Math.round(costosFijos / bounds.days) : 0;
+  const flujo = eachDay(bounds.start, bounds.end).map((dia) => {
+    const ingresos = (ventasPorDia.get(dia) || 0) + (reservasPorDia.get(dia) || 0);
+    const egresos = (insumosPorDia.get(dia) || 0) + fijoPorDia;
+    return { dia, ingresos, egresos };
+  });
+
   res.json({
-    periodo: bounds.periodo,
-    ingresos: { ventas, reservasRealizadas, reservasPrevistas, experienciasRealizadas, experienciasPrevistas },
+    rango: bounds.key,
+    periodo: bounds.label,
+    desde: bounds.start.slice(0, 10),
+    hasta: dateISO(addDays(parseISODate(bounds.end.slice(0, 10)), -1)),
+    ingresos: {
+      ventas,
+      reservasRealizadas,
+      reservasPrevistas,
+      experienciasRealizadas,
+      experienciasPrevistas,
+      total: ingresosTotal,
+    },
+    egresos: {
+      fijos: costosFijos,
+      insumos: costoInsumos,
+      experiencias: costoExperiencias,
+      total: egresosTotal,
+      detalle: costos.map((item) => ({
+        ...item,
+        prorrateado: Math.round(prorateAmount(item.monto, item.periodo, bounds.start, bounds.end)),
+      })),
+    },
     costos: { fijos: costosFijos, insumos: costoInsumos, experiencias: costoExperiencias, detalle: costos },
-    margenRealizado: ingresosRealizados - costosFijos - costoInsumos - costoExperiencias,
+    margenRealizado: ingresosTotal - egresosTotal,
     ocupacionPromedio,
     utilizacion,
     demanda,
+    flujo,
     topProductos,
     experiencias: experiencias.map((item) => ({
       id: item.id,
@@ -1012,7 +1318,7 @@ app.use((error, req, res, next) => {
   if (res.headersSent) return next(error);
   const status = error.status || 500;
   if (status === 500) console.error(error);
-  res.status(status).json({ error: status === 500 ? "Error interno del servidor" : error.message });
+  res.status(status).json({ error: status === 500 ? say(req, "Error interno del servidor", "Internal server error") : error.message });
 });
 
 const port = Number(process.env.PORT) || 3000;
@@ -1021,5 +1327,6 @@ app.listen(port, () => {
   console.log("Dirección  admin@kairo.local");
   console.log("Barista    barista@kairo.local");
   console.log("Cliente    valentina@kairo.local");
+  console.log("Inactiva   inactivo@kairo.local");
   console.log("Clave      kairo123");
 });
