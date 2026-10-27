@@ -29,7 +29,7 @@ import {
 import { pedidosRouter } from "./modules/pedidos/routes.js";
 import { reservasRouter } from "./modules/reservas/routes.js";
 import { reportesRouter } from "./modules/reportes/routes.js";
-import { turnosRouter } from "./modules/turnos/routes.js";
+import { empleadosRouter, turnosRouter } from "./modules/turnos/routes.js";
 import { usuariosRouter } from "./modules/usuarios/routes.js";
 import { ventasRouter } from "./modules/ventas/routes.js";
 
@@ -96,7 +96,7 @@ export function createApp(): Express {
   app.use("/api/reservas", reservasRouter());
   app.use("/api/clientes", clientesRouter());
   app.use("/api/turnos", turnosRouter());
-  app.use("/api/empleados", turnosRouter());
+  app.use("/api/empleados", empleadosRouter());
   app.use("/api/productos", productosRouter());
   app.use("/api/insumos", insumosRouter());
   app.use("/api/movimientos", movimientosRouter());

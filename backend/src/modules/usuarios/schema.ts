@@ -14,6 +14,7 @@ export const crearUsuarioSchema = z.object({
   rol: z.nativeEnum(Rol),
   telefono: z.string().trim().max(30).optional(),
   cargo: z.string().trim().max(60).optional(),
+  salario: z.coerce.number().int().min(0, "El salario no puede ser negativo").max(100_000_000).optional(),
   documento: z.string().trim().max(40).optional(),
   membresia: z.nativeEnum(TipoMembresia).optional(),
 });

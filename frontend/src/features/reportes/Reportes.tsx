@@ -253,7 +253,7 @@ export function Reportes() {
                       type="monotone"
                       dataKey="ingresos"
                       name={t("reportes.ingresos")}
-                      stroke="hsl(var(--primary))"
+                      stroke="hsl(var(--success))"
                       strokeWidth={2}
                       dot={false}
                     />

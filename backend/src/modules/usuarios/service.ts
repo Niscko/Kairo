@@ -86,7 +86,7 @@ export async function crear(input: CrearUsuarioInput): Promise<{ id: number }> {
         data: {
           usuarioId: usuario.id,
           cargo: input.cargo ?? "Sin cargo",
-          salario: 0,
+          salario: input.salario ?? 0,
           fechaIngreso: new Date(),
         },
       });
