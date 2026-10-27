@@ -6,7 +6,7 @@ import { Toaster } from "sonner";
 import { Rutas } from "@/app/Rutas";
 import { ProveedorSesion } from "@/features/auth/Sesion";
 import { cn } from "@/lib/utils";
-import "@/i18n";
+import i18n from "@/i18n";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -50,7 +50,7 @@ class ErrorBoundary extends Component<{ children: ReactNode }, BoundaryState> {
     return (
       <main className="flex min-h-screen items-center justify-center p-6">
         <div className="max-w-md space-y-4 text-center">
-          <h1 className="font-display text-2xl font-semibold">Algo salió mal</h1>
+          <h1 className="font-display text-2xl font-semibold">{i18n.t("common.error")}</h1>
           <p className="text-muted-foreground">{this.state.error.message}</p>
           <button
             type="button"
@@ -60,7 +60,7 @@ class ErrorBoundary extends Component<{ children: ReactNode }, BoundaryState> {
               "transition-colors hover:bg-primary/90",
             )}
           >
-            Reintentar
+            {i18n.t("common.reintentar")}
           </button>
         </div>
       </main>

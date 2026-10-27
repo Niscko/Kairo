@@ -8,6 +8,7 @@ import { PaginaEncabezado } from "@/components/ui/pagina-encabezado";
 import { TablaDatos } from "@/components/ui/tabla-datos";
 import { api } from "@/lib/api";
 import type { Producto } from "@/lib/tipos";
+import { useDato } from "@/i18n/datos";
 
 /** Formatea un monto sin decimales. */
 function monto(valor: number): string {
@@ -20,6 +21,7 @@ function monto(valor: number): string {
 
 export function Catalogo() {
   const { t } = useTranslation();
+  const d = useDato();
 
   const { data, isLoading } = useQuery({
     queryKey: ["productos"],
@@ -33,9 +35,9 @@ export function Catalogo() {
         header: t("common.nombre"),
         cell: ({ row }) => (
           <div>
-            <p className="font-medium">{row.original.nombre}</p>
+            <p className="font-medium">{d(row.original.nombre)}</p>
             {row.original.descripcion && (
-              <p className="text-xs text-muted-foreground">{row.original.descripcion}</p>
+              <p className="text-xs text-muted-foreground">{d(row.original.descripcion)}</p>
             )}
           </div>
         ),
@@ -59,13 +61,13 @@ export function Catalogo() {
           ) : (
             <span className="text-xs text-muted-foreground">
               {row.original.receta
-                .map((item) => `${item.insumo} ${item.cantidad}${item.unidad}`)
+                .map((item) => `${d(item.insumo)} ${item.cantidad}${item.unidad}`)
                 .join(" · ")}
             </span>
           ),
       },
     ],
-    [t],
+    [t, d],
   );
 
   return (

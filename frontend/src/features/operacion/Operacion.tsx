@@ -9,6 +9,7 @@ import { PaginaEncabezado } from "@/components/ui/pagina-encabezado";
 import { TablaDatos } from "@/components/ui/tabla-datos";
 import { api } from "@/lib/api";
 import type { Costo, Permiso } from "@/lib/tipos";
+import { useDato } from "@/i18n/datos";
 
 /** Formatea un monto sin decimales. */
 function monto(valor: number): string {
@@ -21,6 +22,7 @@ function monto(valor: number): string {
 
 export function Operacion() {
   const { t } = useTranslation();
+  const d = useDato();
 
   const costos = useQuery({
     queryKey: ["costos"],
@@ -37,9 +39,13 @@ export function Operacion() {
       {
         accessorKey: "concepto",
         header: t("operacion.concepto"),
-        cell: ({ row }) => <span className="font-medium">{row.original.concepto}</span>,
+        cell: ({ row }) => <span className="font-medium">{d(row.original.concepto)}</span>,
       },
-      { accessorKey: "categoria", header: t("operacion.categoria") },
+      {
+        accessorKey: "categoria",
+        header: t("operacion.categoria"),
+        cell: ({ row }) => d(row.original.categoria),
+      },
       {
         accessorKey: "monto",
         header: t("common.total"),
@@ -53,7 +59,7 @@ export function Operacion() {
         cell: ({ row }) => <BadgeEstado estado={row.original.estado} />,
       },
     ],
-    [t],
+    [t, d],
   );
 
   const columnasPermisos = useMemo<ColumnDef<Permiso, unknown>[]>(
@@ -61,9 +67,13 @@ export function Operacion() {
       {
         accessorKey: "nombre",
         header: t("common.nombre"),
-        cell: ({ row }) => <span className="font-medium">{row.original.nombre}</span>,
+        cell: ({ row }) => <span className="font-medium">{d(row.original.nombre)}</span>,
       },
-      { accessorKey: "entidad", header: t("operacion.entidad") },
+      {
+        accessorKey: "entidad",
+        header: t("operacion.entidad"),
+        cell: ({ row }) => d(row.original.entidad),
+      },
       { accessorKey: "numero", header: t("operacion.numero") },
       { accessorKey: "vencimiento", header: t("common.fecha") },
       {
@@ -72,7 +82,7 @@ export function Operacion() {
         cell: ({ row }) => <BadgeEstado estado={row.original.estado} />,
       },
     ],
-    [t],
+    [t, d],
   );
 
   const totalPendiente =

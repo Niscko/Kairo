@@ -31,6 +31,7 @@ import { TablaDatos } from "@/components/ui/tabla-datos";
 import { api } from "@/lib/api";
 import { descargarArchivo } from "@/lib/descargas";
 import type { RangoReporte, Reporte } from "@/lib/tipos";
+import { useDato } from "@/i18n/datos";
 
 /** Formatea un monto en pesos colombianos, sin decimales. */
 function monto(valor: number): string {
@@ -65,6 +66,7 @@ const DESCARGAS = [
 
 export function Reportes() {
   const { t } = useTranslation();
+  const d = useDato();
   const [rango, setRango] = useState<RangoReporte>("21d");
   const [desde, setDesde] = useState("");
   const [hasta, setHasta] = useState("");
@@ -107,7 +109,7 @@ export function Reportes() {
     <div className="space-y-6">
       <PaginaEncabezado
         titulo={t("nav.reportes")}
-        descripcion={data ? t("reportes.periodo", { periodo: data.periodo }) : t("reportes.descripcion")}
+        descripcion={data ? t("reportes.periodo", { periodo: d(data.periodo) }) : t("reportes.descripcion")}
         acciones={
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -316,7 +318,7 @@ export function Reportes() {
                     .filter((item) => item.horas > 0)
                     .map((item) => (
                       <li key={item.id} className="flex items-center gap-3 text-sm">
-                        <span className="w-32 shrink-0 truncate">{item.nombre}</span>
+                        <span className="w-32 shrink-0 truncate">{d(item.nombre)}</span>
                         <div className="h-2 flex-1 overflow-hidden rounded-full bg-muted">
                           <div
                             className="h-full rounded-full bg-primary"
@@ -348,7 +350,7 @@ export function Reportes() {
                   const maximo = data.topProductos[0]?.ingresos ?? 1;
                   return (
                     <li key={producto.id} className="flex items-center gap-3 text-sm">
-                      <span className="w-32 shrink-0 truncate font-medium">{producto.nombre}</span>
+                      <span className="w-32 shrink-0 truncate font-medium">{d(producto.nombre)}</span>
                       <div className="h-2 flex-1 overflow-hidden rounded-full bg-muted">
                         <div
                           className="h-full rounded-full bg-primary"
@@ -379,7 +381,7 @@ export function Reportes() {
             </CardHeader>
             <CardContent>
               <TablaDatos
-                columnas={columnasEgresos(t)}
+                columnas={columnasEgresos(t, d)}
                 datos={data.egresos.detalle}
                 claveFila={(costo) => costo.id}
                 mensajeVacio={t("common.sinResultados")}
@@ -415,22 +417,27 @@ function Indicador({
       <CardContent className="p-5">
         <p className="text-sm text-muted-foreground">{etiqueta}</p>
         <p className={`mt-2 font-display text-2xl font-semibold tabular ${color}`}>{valor}</p>
-        <p className="mt-1 truncate text-xs text-muted-foreground">{pie}</p>
+        <p className="mt-1 text-xs text-muted-foreground">{pie}</p>
       </CardContent>
     </Card>
   );
 }
 
-function columnasEgresos(t: (clave: string) => string) {
+function columnasEgresos(t: (clave: string) => string, d: (valor: string | null | undefined) => string) {
   return [
     {
       accessorKey: "concepto",
       header: t("reportes.concepto"),
       cell: ({ row }: { row: { original: Reporte["egresos"]["detalle"][number] } }) => (
-        <span className="font-medium">{row.original.concepto}</span>
+        <span className="font-medium">{d(row.original.concepto)}</span>
       ),
     },
-    { accessorKey: "categoria", header: t("reportes.categoria") },
+    {
+      accessorKey: "categoria",
+      header: t("reportes.categoria"),
+      cell: ({ row }: { row: { original: Reporte["egresos"]["detalle"][number] } }) =>
+        d(row.original.categoria),
+    },
     {
       accessorKey: "monto",
       header: t("reportes.monto"),

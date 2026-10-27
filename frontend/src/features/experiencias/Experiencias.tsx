@@ -9,6 +9,7 @@ import { PaginaEncabezado } from "@/components/ui/pagina-encabezado";
 import { TablaDatos } from "@/components/ui/tabla-datos";
 import { api } from "@/lib/api";
 import type { Experiencia } from "@/lib/tipos";
+import { useDato } from "@/i18n/datos";
 
 /** Formatea un monto sin decimales. */
 function monto(valor: number): string {
@@ -26,6 +27,7 @@ function fechaCorta(iso: string): string {
 
 export function Experiencias() {
   const { t } = useTranslation();
+  const d = useDato();
 
   const { data, isLoading } = useQuery({
     queryKey: ["experiencias"],
@@ -39,14 +41,18 @@ export function Experiencias() {
         header: t("common.nombre"),
         cell: ({ row }) => (
           <div>
-            <p className="font-medium">{row.original.nombre}</p>
+            <p className="font-medium">{d(row.original.nombre)}</p>
             {row.original.descripcion && (
-              <p className="text-xs text-muted-foreground">{row.original.descripcion}</p>
+              <p className="text-xs text-muted-foreground">{d(row.original.descripcion)}</p>
             )}
           </div>
         ),
       },
-      { accessorKey: "espacio", header: t("experiencias.espacio") },
+      {
+        accessorKey: "espacio",
+        header: t("experiencias.espacio"),
+        cell: ({ row }) => d(row.original.espacio),
+      },
       {
         accessorKey: "inicio",
         header: t("common.fecha"),
@@ -76,7 +82,7 @@ export function Experiencias() {
         cell: ({ row }) => <BadgeEstado estado={row.original.estado} />,
       },
     ],
-    [t],
+    [t, d],
   );
 
   return (

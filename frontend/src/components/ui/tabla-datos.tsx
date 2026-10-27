@@ -10,6 +10,7 @@ import {
 } from "@tanstack/react-table";
 import { ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react";
 import { useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -51,10 +52,11 @@ export function TablaDatos<T>({
   datos,
   claveFila,
   cargando = false,
-  mensajeVacio = "Sin resultados",
+  mensajeVacio,
   paginar = true,
   destacado = null,
 }: Props<T>) {
+  const { t } = useTranslation();
   const [orden, setOrden] = useState<SortingState>([]);
   const [filtro, setFiltro] = useState("");
 
@@ -90,14 +92,18 @@ export function TablaDatos<T>({
           type="search"
           value={filtro}
           onChange={(evento) => setFiltro(evento.target.value)}
-          placeholder="Buscar…"
-          aria-label="Buscar"
+          placeholder={`${t("common.buscar")}…`}
+          aria-label={t("common.buscar")}
           className="h-9 w-full max-w-xs rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
         />
         {!cargando && (
           <p className="text-xs text-muted-foreground">
-            {tabla.getFilteredRowModel().rows.length} resultado
-            {tabla.getFilteredRowModel().rows.length === 1 ? "" : "s"}
+            {tabla.getFilteredRowModel().rows.length}{" "}
+            {t(
+              tabla.getFilteredRowModel().rows.length === 1
+                ? "common.resultado"
+                : "common.resultados",
+            )}
           </p>
         )}
       </div>
@@ -156,7 +162,7 @@ export function TablaDatos<T>({
                   colSpan={columnas.length}
                   className="h-24 text-center text-sm text-muted-foreground"
                 >
-                  {mensajeVacio}
+                  {mensajeVacio ?? t("common.sinResultados")}
                 </TableCell>
               </TableRow>
             ) : (
@@ -180,7 +186,7 @@ export function TablaDatos<T>({
       {paginar && tabla.getPageCount() > 1 && (
         <div className="flex items-center justify-between text-sm">
           <span className="text-muted-foreground">
-            Página {paginacion.pageIndex + 1} de {tabla.getPageCount()}
+            {t("common.pagina")} {paginacion.pageIndex + 1} {t("common.de")} {tabla.getPageCount()}
           </span>
           <div className="flex gap-2">
             <Button
@@ -189,7 +195,7 @@ export function TablaDatos<T>({
               onClick={() => tabla.previousPage()}
               disabled={!tabla.getCanPreviousPage()}
             >
-              Anterior
+              {t("common.anterior")}
             </Button>
             <Button
               variant="outline"
@@ -197,7 +203,7 @@ export function TablaDatos<T>({
               onClick={() => tabla.nextPage()}
               disabled={!tabla.getCanNextPage()}
             >
-              Siguiente
+              {t("common.siguiente")}
             </Button>
           </div>
         </div>

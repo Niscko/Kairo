@@ -8,9 +8,11 @@ import { PaginaEncabezado } from "@/components/ui/pagina-encabezado";
 import { TablaDatos } from "@/components/ui/tabla-datos";
 import { api } from "@/lib/api";
 import type { Turno } from "@/lib/tipos";
+import { useDato } from "@/i18n/datos";
 
 export function Turnos() {
   const { t } = useTranslation();
+  const d = useDato();
 
   const { data, isLoading } = useQuery({
     queryKey: ["turnos"],
@@ -34,13 +36,17 @@ export function Turnos() {
         cell: ({ row }) => (
           <div>
             <p className="font-medium">{row.original.nombre}</p>
-            <p className="text-xs text-muted-foreground">{row.original.cargo}</p>
+            <p className="text-xs text-muted-foreground">{d(row.original.cargo)}</p>
           </div>
         ),
       },
-      { accessorKey: "area", header: t("turnos.area") },
+      {
+        accessorKey: "area",
+        header: t("turnos.area"),
+        cell: ({ row }) => d(row.original.area),
+      },
     ],
-    [t],
+    [t, d],
   );
 
   return (

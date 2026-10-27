@@ -9,9 +9,11 @@ import { PaginaEncabezado } from "@/components/ui/pagina-encabezado";
 import { TablaDatos } from "@/components/ui/tabla-datos";
 import { api } from "@/lib/api";
 import type { Insumo, Movimiento } from "@/lib/tipos";
+import { useDato } from "@/i18n/datos";
 
 export function Inventario() {
   const { t } = useTranslation();
+  const d = useDato();
 
   const { data, isLoading } = useQuery({
     queryKey: ["insumos"],
@@ -28,15 +30,19 @@ export function Inventario() {
       {
         accessorKey: "nombre",
         header: t("common.nombre"),
-        cell: ({ row }) => <span className="font-medium">{row.original.nombre}</span>,
+        cell: ({ row }) => <span className="font-medium">{d(row.original.nombre)}</span>,
       },
-      { accessorKey: "unidad", header: t("inventario.unidad") },
+      {
+        accessorKey: "unidad",
+        header: t("inventario.unidad"),
+        cell: ({ row }) => d(row.original.unidad),
+      },
       {
         accessorKey: "stock",
         header: t("inventario.stock"),
         cell: ({ row }) => (
           <span className="tabular">
-            {row.original.stock} {row.original.unidad}
+            {row.original.stock} {d(row.original.unidad)}
           </span>
         ),
       },
@@ -55,15 +61,23 @@ export function Inventario() {
             <BadgeEstado estado="vigente" />
           ),
       },
-      { accessorKey: "proveedor", header: t("inventario.proveedor") },
+      {
+        accessorKey: "proveedor",
+        header: t("inventario.proveedor"),
+        cell: ({ row }) => d(row.original.proveedor),
+      },
     ],
-    [t],
+    [t, d],
   );
 
   const columnasMovimiento = useMemo<ColumnDef<Movimiento, unknown>[]>(
     () => [
       { accessorKey: "fecha", header: t("common.fecha") },
-      { accessorKey: "insumo", header: t("common.nombre") },
+      {
+        accessorKey: "insumo",
+        header: t("common.nombre"),
+        cell: ({ row }) => d(row.original.insumo),
+      },
       {
         accessorKey: "tipo",
         header: t("common.estado"),
@@ -74,13 +88,17 @@ export function Inventario() {
         header: t("common.cantidad"),
         cell: ({ row }) => (
           <span className="tabular">
-            {row.original.cantidad} {row.original.unidad}
+            {row.original.cantidad} {d(row.original.unidad)}
           </span>
         ),
       },
-      { accessorKey: "motivo", header: t("inventario.motivo") },
+      {
+        accessorKey: "motivo",
+        header: t("inventario.motivo"),
+        cell: ({ row }) => d(row.original.motivo),
+      },
     ],
-    [t],
+    [t, d],
   );
 
   return (

@@ -8,6 +8,7 @@ import { PaginaEncabezado } from "@/components/ui/pagina-encabezado";
 import { TablaDatos } from "@/components/ui/tabla-datos";
 import { api } from "@/lib/api";
 import type { Empleado } from "@/lib/tipos";
+import { useDato } from "@/i18n/datos";
 
 /** Formatea un monto sin decimales. */
 function monto(valor: number): string {
@@ -20,6 +21,7 @@ function monto(valor: number): string {
 
 export function Personas() {
   const { t } = useTranslation();
+  const d = useDato();
 
   const { data, isLoading } = useQuery({
     queryKey: ["empleados"],
@@ -33,7 +35,11 @@ export function Personas() {
         header: t("common.nombre"),
         cell: ({ row }) => <span className="font-medium">{row.original.nombre}</span>,
       },
-      { accessorKey: "cargo", header: t("personas.cargo") },
+      {
+        accessorKey: "cargo",
+        header: t("personas.cargo"),
+        cell: ({ row }) => d(row.original.cargo),
+      },
       { accessorKey: "email", header: t("common.email") },
       { accessorKey: "telefono", header: t("common.telefono") },
       { accessorKey: "fechaIngreso", header: t("personas.ingreso") },
@@ -45,7 +51,7 @@ export function Personas() {
           row.original.salario === undefined ? "—" : <span className="tabular">{monto(row.original.salario)}</span>,
       },
     ],
-    [t],
+    [t, d],
   );
 
   return (

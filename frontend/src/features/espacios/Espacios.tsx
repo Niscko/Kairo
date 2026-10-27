@@ -23,6 +23,7 @@ import { TablaDatos } from "@/components/ui/tabla-datos";
 import { useSesion } from "@/features/auth/Sesion";
 import { api } from "@/lib/api";
 import type { Espacio, TipoEspacio } from "@/lib/tipos";
+import { useDato } from "@/i18n/datos";
 
 /** Formatea un monto sin decimales. */
 function monto(valor: number): string {
@@ -37,6 +38,7 @@ const TIPOS: TipoEspacio[] = ["puesto", "sala", "mesa", "evento"];
 
 export function Espacios() {
   const { t } = useTranslation();
+  const d = useDato();
   const { usuario } = useSesion();
   const queryClient = useQueryClient();
   const [editando, setEditando] = useState<Espacio | null>(null);
@@ -57,7 +59,7 @@ export function Espacios() {
       {
         accessorKey: "nombre",
         header: t("common.nombre"),
-        cell: ({ row }) => <span className="font-medium">{row.original.nombre}</span>,
+        cell: ({ row }) => <span className="font-medium">{d(row.original.nombre)}</span>,
       },
       {
         accessorKey: "tipo",
@@ -67,6 +69,7 @@ export function Espacios() {
       {
         accessorKey: "zona",
         header: t("espacios.zona"),
+        cell: ({ row }) => d(row.original.zona),
       },
       {
         accessorKey: "capacidad",
@@ -102,7 +105,7 @@ export function Espacios() {
           ]
         : []),
     ],
-    [t, esAdmin],
+    [t, d, esAdmin],
   );
 
   return (

@@ -23,6 +23,7 @@ import { TablaDatos } from "@/components/ui/tabla-datos";
 import { useSesion } from "@/features/auth/Sesion";
 import { api } from "@/lib/api";
 import type { Espacio, PropositoReserva, Reserva } from "@/lib/tipos";
+import { useDato } from "@/i18n/datos";
 
 /** Formatea un monto sin decimales. */
 function monto(valor: number): string {
@@ -52,6 +53,7 @@ function aFormatoApi(valor: string): string {
 
 export function Reservas() {
   const { t } = useTranslation();
+  const d = useDato();
   const { usuario } = useSesion();
   const queryClient = useQueryClient();
   const [creando, setCreando] = useState(false);
@@ -85,7 +87,7 @@ export function Reservas() {
       {
         accessorKey: "espacio",
         header: t("reservas.espacio"),
-        cell: ({ row }) => <span className="font-medium">{row.original.espacio}</span>,
+        cell: ({ row }) => <span className="font-medium">{d(row.original.espacio)}</span>,
       },
       { accessorKey: "cliente", header: t("reservas.cliente") },
       {
@@ -122,7 +124,7 @@ export function Reservas() {
           ),
       },
     ],
-    [t, cancelar],
+    [t, d, cancelar],
   );
 
   return (
@@ -189,6 +191,7 @@ function DialogoReserva({
   esCliente: boolean;
 }) {
   const { t } = useTranslation();
+  const d = useDato();
   const [error, setError] = useState<string | null>(null);
 
   const espacios = useQuery({
@@ -246,7 +249,7 @@ function DialogoReserva({
             etiqueta={t("reservas.espacio")}
             opciones={(espacios.data?.datos ?? []).map((espacio) => ({
               valor: String(espacio.id),
-              etiqueta: `${espacio.nombre} · ${espacio.zona}`,
+              etiqueta: `${d(espacio.nombre)} · ${d(espacio.zona)}`,
             }))}
             placeholder={t("common.selecciona")}
             requerido

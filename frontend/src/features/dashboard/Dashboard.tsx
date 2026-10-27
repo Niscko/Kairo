@@ -19,6 +19,7 @@ import { Progress } from "@/components/ui/progress";
 import { useSesion } from "@/features/auth/Sesion";
 import { api } from "@/lib/api";
 import type { Dashboard as DashboardDTO } from "@/lib/tipos";
+import { useDato } from "@/i18n/datos";
 
 /** Formatea un monto en pesos colombianos, sin decimales. */
 function monto(valor: number): string {
@@ -36,6 +37,7 @@ function hora(iso: string): string {
 
 export function Dashboard() {
   const { t } = useTranslation();
+  const d = useDato();
   const { usuario } = useSesion();
 
   const { data, isLoading } = useQuery({
@@ -151,7 +153,7 @@ export function Dashboard() {
             <ul className="space-y-2">
               {data.espacios.slice(0, 8).map((espacio) => (
                 <li key={espacio.id} className="flex items-center justify-between gap-2 text-sm">
-                  <span className="truncate">{espacio.nombre}</span>
+                  <span className="truncate">{d(espacio.nombre)}</span>
                   <BadgeEstado estado={espacio.presencia === "ocupado" ? "ocupado" : "libre"} />
                 </li>
               ))}
@@ -181,7 +183,7 @@ export function Dashboard() {
                   <li key={reserva.id} className="flex items-start gap-3 text-sm">
                     <CalendarClock className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden />
                     <div className="min-w-0 flex-1">
-                      <p className="truncate font-medium">{reserva.espacio}</p>
+                      <p className="truncate font-medium">{d(reserva.espacio)}</p>
                       <p className="text-xs text-muted-foreground">
                         {hora(reserva.inicio)}–{hora(reserva.fin)}
                         {reserva.cliente && ` · ${reserva.cliente}`}
@@ -208,7 +210,7 @@ export function Dashboard() {
                   <li key={turno.id} className="flex items-center justify-between gap-3 text-sm">
                     <div className="min-w-0">
                       <p className="truncate font-medium">{turno.nombre}</p>
-                      <p className="text-xs text-muted-foreground">{turno.area}</p>
+                      <p className="text-xs text-muted-foreground">{d(turno.area)}</p>
                     </div>
                     <span className="shrink-0 tabular text-muted-foreground">
                       {turno.horaInicio}–{turno.horaFin}
@@ -240,9 +242,9 @@ export function Dashboard() {
                       key={insumo.id}
                       className="flex items-center justify-between gap-2 rounded-md border border-border px-3 py-2 text-sm"
                     >
-                      <span className="truncate">{insumo.nombre}</span>
+                      <span className="truncate">{d(insumo.nombre)}</span>
                       <span className="shrink-0 tabular text-xs text-destructive">
-                        {insumo.stock} / {insumo.stockMinimo} {insumo.unidad}
+                        {insumo.stock} / {insumo.stockMinimo} {d(insumo.unidad)}
                       </span>
                     </li>
                   ))}
@@ -258,7 +260,7 @@ export function Dashboard() {
                       key={permiso.id}
                       className="flex items-center justify-between gap-3 text-sm"
                     >
-                      <span className="truncate">{permiso.nombre}</span>
+                      <span className="truncate">{d(permiso.nombre)}</span>
                       <span className="flex shrink-0 items-center gap-2">
                         <span className="text-xs text-muted-foreground">{permiso.vencimiento}</span>
                         <BadgeEstado estado={permiso.estado} />

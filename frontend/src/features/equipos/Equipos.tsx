@@ -9,6 +9,7 @@ import { PaginaEncabezado } from "@/components/ui/pagina-encabezado";
 import { TablaDatos } from "@/components/ui/tabla-datos";
 import { api } from "@/lib/api";
 import type { Equipo } from "@/lib/tipos";
+import { useDato } from "@/i18n/datos";
 
 /** Formatea un monto sin decimales. */
 function monto(valor: number): string {
@@ -21,6 +22,7 @@ function monto(valor: number): string {
 
 export function Equipos() {
   const { t } = useTranslation();
+  const d = useDato();
 
   const { data, isLoading } = useQuery({
     queryKey: ["equipos"],
@@ -32,7 +34,7 @@ export function Equipos() {
       {
         accessorKey: "nombre",
         header: t("common.nombre"),
-        cell: ({ row }) => <span className="font-medium">{row.original.nombre}</span>,
+        cell: ({ row }) => <span className="font-medium">{d(row.original.nombre)}</span>,
       },
       {
         accessorKey: "tipo",
@@ -44,14 +46,18 @@ export function Equipos() {
         header: t("common.estado"),
         cell: ({ row }) => <BadgeEstado estado={row.original.estado} />,
       },
-      { accessorKey: "espacio", header: t("equipos.ubicacion") },
+      {
+        accessorKey: "espacio",
+        header: t("equipos.ubicacion"),
+        cell: ({ row }) => d(row.original.espacio),
+      },
       {
         accessorKey: "costo",
         header: t("equipos.costo"),
         cell: ({ row }) => <span className="tabular">{monto(row.original.costo)}</span>,
       },
     ],
-    [t],
+    [t, d],
   );
 
   return (

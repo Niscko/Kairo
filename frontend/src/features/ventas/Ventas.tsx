@@ -8,6 +8,7 @@ import { PaginaEncabezado } from "@/components/ui/pagina-encabezado";
 import { TablaDatos } from "@/components/ui/tabla-datos";
 import { api } from "@/lib/api";
 import type { Venta } from "@/lib/tipos";
+import { useDato } from "@/i18n/datos";
 
 /** Formatea un monto sin decimales. */
 function monto(valor: number): string {
@@ -20,6 +21,7 @@ function monto(valor: number): string {
 
 export function Ventas() {
   const { t } = useTranslation();
+  const d = useDato();
 
   const { data, isLoading } = useQuery({
     queryKey: ["ventas"],
@@ -35,7 +37,7 @@ export function Ventas() {
         cell: ({ row }) => (
           <span className="text-xs text-muted-foreground">
             {row.original.items
-              .map((item) => `${item.cantidad}× ${item.producto}`)
+              .map((item) => `${item.cantidad}× ${d(item.producto)}`)
               .join(" · ")}
           </span>
         ),
@@ -53,7 +55,7 @@ export function Ventas() {
         cell: ({ row }) => <span className="tabular font-medium">{monto(row.original.total)}</span>,
       },
     ],
-    [t],
+    [t, d],
   );
 
   return (

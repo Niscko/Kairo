@@ -7,6 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { PaginaEncabezado } from "@/components/ui/pagina-encabezado";
 import { Progress } from "@/components/ui/progress";
 import { api } from "@/lib/api";
+import { useDato } from "@/i18n/datos";
 
 interface Agenda {
   dia: string;
@@ -61,6 +62,7 @@ function monto(valor: number): string {
 
 export function Hoy() {
   const { t } = useTranslation();
+  const d = useDato();
 
   const { data, isLoading } = useQuery({
     queryKey: ["agenda"],
@@ -126,7 +128,7 @@ export function Hoy() {
                       {reserva.inicio.slice(11, 16)}–{reserva.fin.slice(11, 16)}
                     </span>
                     <div className="min-w-0 flex-1">
-                      <p className="truncate font-medium">{reserva.espacio}</p>
+                      <p className="truncate font-medium">{d(reserva.espacio)}</p>
                       <p className="text-xs text-muted-foreground">
                         {reserva.cliente ?? t(`proposito.${reserva.proposito}`)}
                         {" · "}
@@ -157,7 +159,7 @@ export function Hoy() {
                 const porcentaje = Math.min(100, (horas / 16) * 100);
                 return (
                   <li key={espacio.id} className="flex items-center gap-3 text-sm">
-                    <span className="w-28 shrink-0 truncate">{espacio.nombre}</span>
+                    <span className="w-28 shrink-0 truncate">{d(espacio.nombre)}</span>
                     <Progress value={porcentaje} className="flex-1" />
                     <span className="w-16 shrink-0 text-right tabular text-xs text-muted-foreground">
                       {espacio.presencia === "ocupado" && espacio.hasta
@@ -190,9 +192,9 @@ export function Hoy() {
                       {experiencia.inicio.slice(11, 16)}
                     </span>
                     <div className="min-w-0 flex-1">
-                      <p className="truncate font-medium">{experiencia.nombre}</p>
+                      <p className="truncate font-medium">{d(experiencia.nombre)}</p>
                       <p className="text-xs text-muted-foreground">
-                        {experiencia.espacio} ·{" "}
+                        {d(experiencia.espacio)} ·{" "}
                         {t("experiencias.capacidad")} {experiencia.participantes}/
                         {experiencia.capacidad}
                       </p>
@@ -220,7 +222,7 @@ export function Hoy() {
                   <li key={turno.id} className="flex items-center justify-between gap-3 text-sm">
                     <div className="min-w-0">
                       <p className="truncate font-medium">{turno.nombre}</p>
-                      <p className="text-xs text-muted-foreground">{turno.area}</p>
+                      <p className="text-xs text-muted-foreground">{d(turno.area)}</p>
                     </div>
                     <span className="shrink-0 tabular text-muted-foreground">
                       {turno.horaInicio}–{turno.horaFin}

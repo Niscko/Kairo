@@ -21,6 +21,7 @@ import { SelectCampo } from "@/components/ui/select-campo";
 
 import { api } from "@/lib/api";
 import type { CategoriaProducto, MetodoPago, Producto } from "@/lib/tipos";
+import { useDato } from "@/i18n/datos";
 
 /** Formatea un monto sin decimales. */
 function monto(valor: number): string {
@@ -36,6 +37,7 @@ const METODOS: MetodoPago[] = ["efectivo", "tarjeta", "transferencia"];
 
 export function Pedir() {
   const { t } = useTranslation();
+  const d = useDato();
   const queryClient = useQueryClient();
   const [carrito, setCarrito] = useState<Map<number, number>>(new Map());
   const [categoria, setCategoria] = useState<CategoriaProducto | "todas">("todas");
@@ -179,9 +181,9 @@ export function Pedir() {
                   <CardContent className="flex h-full flex-col gap-2 p-4">
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
-                        <p className="truncate font-medium">{producto.nombre}</p>
+                        <p className="truncate font-medium">{d(producto.nombre)}</p>
                         {producto.descripcion && (
-                          <p className="text-xs text-muted-foreground">{producto.descripcion}</p>
+                          <p className="text-xs text-muted-foreground">{d(producto.descripcion)}</p>
                         )}
                       </div>
                       {producto.esAlcohol && (
@@ -256,7 +258,7 @@ export function Pedir() {
               item.producto ? (
                 <li key={item.producto.id} className="flex justify-between text-sm">
                   <span className="truncate">
-                    {item.cantidad}× {item.producto.nombre}
+                    {item.cantidad}× {d(item.producto.nombre)}
                   </span>
                   <span className="shrink-0 tabular">
                     {monto(item.producto.precio * item.cantidad)}
