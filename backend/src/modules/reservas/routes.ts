@@ -1,23 +1,17 @@
-import { Router } from "express";
+import { type Router } from "express";
 import { z } from "zod";
 
-import { clienteIdDeUsuario } from "../../lib/clientes.js";
+import { identidadDeUsuario } from "../../lib/clientes.js";
 import { ValidationError } from "../../lib/errors.js";
-import { requireAuth, requireRole } from "../../middleware/auth.js";
 import { asyncHandler } from "../../middleware/async-handler.js";
-import {
-  cancelarReservaSchema,
-  crearReservaSchema,
-  listarReservasQuerySchema,
-} from "./schema.js";
+import { cancelarReservaSchema, crearReservaSchema, listarReservasQuerySchema } from "./schema.js";
 import { cancelar, crear, listar } from "./service.js";
+import { routerConAuth } from "../../middleware/router.js";
 
 const idParamSchema = z.coerce.number().int().positive();
 
 export function reservasRouter(): Router {
-  const router = Router();
-
-  router.use(requireAuth);
+  const router = routerConAuth();
 
   // GET /api/reservas
   router.get(
@@ -25,9 +19,8 @@ export function reservasRouter(): Router {
     asyncHandler(async (req, res) => {
       const query = listarReservasQuerySchema.parse(req.query);
       // El personal ve todas las reservas; un cliente solo las suyas.
-      const clienteId =
-        req.auth?.rol === "cliente" ? await clienteIdDeUsuario(req.auth.userId) : null;
-      res.status(200).json(await listar(query, clienteId));
+      const identidad = await identidadDeUsuario(req.auth!.userId, req.auth!.rol);
+      res.status(200).json(await listar(query, identidad));
     }),
   );
 
@@ -36,9 +29,8 @@ export function reservasRouter(): Router {
     "/",
     asyncHandler(async (req, res) => {
       const input = crearReservaSchema.parse(req.body);
-      const clienteId =
-        req.auth?.rol === "cliente" ? await clienteIdDeUsuario(req.auth.userId) : null;
-      res.status(201).json(await crear(input, clienteId));
+      const identidad = await identidadDeUsuario(req.auth!.userId, req.auth!.rol);
+      res.status(201).json(await crear(input, identidad));
     }),
   );
 
@@ -48,9 +40,8 @@ export function reservasRouter(): Router {
     asyncHandler(async (req, res) => {
       const id = parseId(req.params.id);
       cancelarReservaSchema.parse(req.body);
-      const clienteId =
-        req.auth?.rol === "cliente" ? await clienteIdDeUsuario(req.auth.userId) : null;
-      await cancelar(id, clienteId);
+      const identidad = await identidadDeUsuario(req.auth!.userId, req.auth!.rol);
+      await cancelar(id, identidad);
       res.status(200).json({ ok: true });
     }),
   );
@@ -65,5 +56,3 @@ function parseId(raw: string | undefined): number {
   }
   return parsed.data;
 }
-
-export { requireRole };

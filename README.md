@@ -125,9 +125,15 @@ Modelo híbrido, adecuado para una SPA sobre el mismo origen:
   encadenado por familia. Presentar un token ya rotado revoca la familia
   completa: es la señal de que alguien copió la credencial.
 - **CSRF**: doble cookie. El backend firma una cookie legible por JavaScript y el
-  cliente la copia a la cabecera `X-XSRF-TOKEN` en cada escritura.
+  cliente la copia a la cabecera `X-XSRF-TOKEN` en cada escritura. El backend
+  comprueba que la cabecera y la cookie coincidan y que el token esté firmado
+  para el usuario de la sesión.
 - **RBAC**: `requireAuth` deja el payload en `req.auth`; `requireRole(...)` lo
   restringe. Solo `admin` escribe espacios.
+- **Identidad efectiva**: `identidadDeUsuario` resuelve el perfil asociado al
+  token. El discriminante es explícito, no un `null` ambiguo: una cuenta con
+  rol `cliente` sin perfil de cliente se rechaza con 403 en vez de tratarse
+  como personal.
 - **Rate limit**: 10 intentos por ventana en `/auth/login` (solo los fallidos se
   cuentan), 100 en el resto de la API.
 
@@ -142,6 +148,9 @@ Modelo híbrido, adecuado para una SPA sobre el mismo origen:
 - La configuración se valida al arrancar: un secreto corto o repetido detiene el
   proceso con un mensaje explícito en lugar de fallar en runtime.
 - El contenedor corre como usuario no root (`kairo`, uid 1001) con `tini` como PID 1.
+- **El panel y la agenda filtran por rol**: un cliente no recibe el inventario,
+  los permisos, los turnos del personal ni la caja del día. Tampoco ve la receta
+  de los productos: es información de costos.
 
 ## API
 
@@ -156,9 +165,10 @@ y `auth/login`.
 | `/api/auth/refresh`         | POST          | cookie refresh  | Rota el refresh token y renueva el acceso   |
 | `/api/auth/logout`          | POST          | cookie refresh  | Revoca la sesión                            |
 | `/api/auth/me`              | GET           | autenticado     | Usuario de la sesión actual                 |
+| `/api/agenda`               | GET           | autenticado     | Agenda del día; un cliente solo ve la suya  |
 | `/api/dashboard`            | GET           | autenticado     | Panel con métricas; cambia según el rol    |
 | `/api/usuarios`             | GET POST PATCH| admin           | Cuentas y sus perfiles                      |
-| `/api/espacios`             | GET POST PATCH| autenticado / admin | Espacios del local                       |
+| `/api/espacios`             | GET POST PATCH DELETE | autenticado / admin | Espacios del local                 |
 | `/api/reservas`             | GET POST PATCH| autenticado     | Reservas; un cliente solo ve las suyas      |
 | `/api/clientes`             | GET PATCH     | admin, empleado | Base de clientes y membresías               |
 | `/api/turnos`               | GET POST      | admin, empleado / admin | Turnos del personal                  |
@@ -168,11 +178,14 @@ y `auth/login`.
 | `/api/movimientos`          | GET POST      | admin, empleado | Entradas, salidas y mermas                  |
 | `/api/proveedores`          | GET POST      | admin, empleado | Proveedores                                 |
 | `/api/ventas`               | GET POST      | admin, empleado / autenticado | Caja y registro de ventas       |
+| `/api/pedidos`              | POST          | autenticado     | Pedido al mostrador; el cliente pide a su nombre |
+| `/api/pedidos/disponibilidad` | GET         | autenticado     | Cuántas unidades quedan de cada producto    |
 | `/api/experiencias`          | GET POST      | autenticado / personal | Experiencias, participantes, cierre y cancelación |
 | `/api/equipos`              | GET POST PATCH| admin, empleado | Equipos del local                           |
 | `/api/costos`               | GET POST PATCH| admin           | Costos y obligaciones                       |
 | `/api/permisos`             | GET POST      | admin           | Licencias y permisos vigentes                |
 | `/api/reportes`             | GET           | admin           | Reporte de ingresos, egresos y margen        |
+| `/api/exportaciones`        | GET           | admin, personal | Descarga de CSV de ventas, reservas e inventario |
 
 Los errores siempre llegan con la misma forma:
 
@@ -187,7 +200,7 @@ mensajes de consola.
 
 - **Horarios**: las reservas van de 07:00 a 23:00, en bloques de 30 minutos,
   entre 1 y 14 horas, siempre dentro del mismo día. Los turnos siguen las
-  mismas reglas de bloque y horario.
+  mismas reglas de bloque y horario. No se admiten reservas en el pasado.
 - **Precio de reserva**: por hora del espacio, según su tarifa. Un puesto
   covered por membresía vigente no se cobra. Un evento no se cobra por hora:
   se cobra por el producto de la experiencia.
@@ -201,6 +214,9 @@ mensajes de consola.
   edad del cliente.
 - **Experiencias**: al crearse, generan la reserva que bloquea su espacio; al
   cancelarse, la liberan.
+- **Estado de una reserva**: se deriva del horario, no de un campo que nadie
+  actualiza. Una reserva vencida queda `completada` y cuenta como ingreso
+  realizado; el reporte la barrer antes de medir.
 
 ## Reportes
 
@@ -263,11 +279,12 @@ Detalles que cuesta descubrir y conviene documentar:
   minutos; se desactiva en `pnpm-workspace.yaml` con `verifyDepsBeforeRun: false`.
 - **`make wait` tiene tiempo máximo** (`WAIT_TIMEOUT`, 180 s por defecto) y
   muestra los logs del servicio que falló en vez de esperar indefinidamente.
-- **El rate limit de login se mide por IP.** La suite e2e hace muchas
-  peticiones desde la misma dirección, así que con el límite normal (10
-  intentos fallidos) se bloquearía a sí misma. `make test-e2e` levanta el
-  backend con `RELAJAR_RATE_LIMIT=true`; en producción esa variable está en
-  `false` y el límite se aplica con normalidad.
+- **Los rate limits se miden por IP.** La suite e2e hace muchas peticiones
+  desde la misma dirección, así que con los límites normales (10 intentos
+  fallidos de login y 100 peticiones en el resto de la API) se bloquearía a sí
+  misma. `make test-e2e` levanta el backend con `RELAJAR_RATE_LIMIT=true`; en
+  producción esa variable está en `false` y los límites se aplican con
+  normalidad.
 - **Los insumos tienen dos unidades**: la del stock (`g`, `ml`, `un`) y la de
   compra (`kg`, `L`, `unidad`). El campo `factor_conversion` dice cuántas
   unidades de stock hay en una unidad de compra. Sin él, el costo de insumos
@@ -280,11 +297,11 @@ Detalles que cuesta descubrir y conviene documentar:
       estrictos, pruebas y documentación.
 - [x] **Fase 1 — Backend funcional**: los 16 módulos de dominio del sistema
       original portados a Express con servicios tipados, validación Zod y
-      agregaciones en SQL. 87 pruebas cubren reglas de negocio, RBAC y casos
+      agregaciones en SQL. 164 pruebas cubren reglas de negocio, RBAC y casos
       límite.
 - [x] **Fase 2 — Interfaz base**: shell con navegación por rol, componentes
       shadcn/Radix, tablas con orden y filtro, formularios con validación en el
-      cliente, i18n es/en con 500 claves, y 16 pruebas de extremo a extremo que
+      cliente, i18n es/en con 536 claves, y 20 pruebas de extremo a extremo que
       comprueban el camino completo del navegador hasta Postgres.
 - [x] **Fase 3 — Reportes**: módulo de reportes con agregaciones en SQL:
   ingresos (ventas, reservas realizadas y previstas, experiencias), egresos
@@ -328,6 +345,6 @@ Decisiones que conviene conocer:
   de la API. `BadgeEstado` asigna además el color según la semántica.
 - **Las tablas fijan arriba la fila recién creada** (`destacado`), para que el
   usuario vea el resultado de su acción aunque la tabla esté paginada.
-- **El i18n tiene 500 claves** en español e inglés, extraídas del sistema
+- **El i18n tiene 536 claves** en español e inglés, extraídas del sistema
   original y ampliadas con las de los módulos nuevos. Todas están verificadas
   contra el código: no hay claves huérfanas ni referenciadas sin traducir.

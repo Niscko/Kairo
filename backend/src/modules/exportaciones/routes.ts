@@ -1,18 +1,25 @@
-import { Router } from "express";
+import { type Router } from "express";
 import { z } from "zod";
 
 import { aCsv, nombreArchivo } from "../../lib/csv.js";
 import { dateISO } from "../../lib/domain.js";
 import { prisma } from "../../lib/prisma.js";
-import { requireAuth, requireRole } from "../../middleware/auth.js";
+import { requireRole } from "../../middleware/auth.js";
 import { asyncHandler } from "../../middleware/async-handler.js";
 import { resolverPeriodo } from "../../lib/periodos.js";
 import { formatDateTimeLocal } from "../reservas/schema.js";
+import { routerConAuth } from "../../middleware/router.js";
 
 const querySchema = z.object({
   rango: z.enum(["hoy", "7d", "21d", "mes", "custom"]).default("mes"),
-  desde: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-  hasta: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  desde: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
+  hasta: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
 });
 
 /**
@@ -23,9 +30,7 @@ const querySchema = z.object({
  * decimal que espera el idioma.
  */
 export function exportacionesRouter(): Router {
-  const router = Router();
-
-  router.use(requireAuth);
+  const router = routerConAuth();
 
   // GET /api/exportaciones/ventas.csv
   router.get(
@@ -88,10 +93,7 @@ export function exportacionesRouter(): Router {
       );
 
       res.setHeader("Content-Type", "text/csv; charset=utf-8");
-      res.setHeader(
-        "Content-Disposition",
-        `attachment; filename="${nombreArchivo("ventas")}"`,
-      );
+      res.setHeader("Content-Disposition", `attachment; filename="${nombreArchivo("ventas")}"`);
       res.send(csv);
     }),
   );
@@ -120,7 +122,18 @@ export function exportacionesRouter(): Router {
       });
 
       const csv = aCsv(
-        ["Reserva", "Espacio", "Tipo", "Cliente", "Inicio", "Fin", "Propósito", "Estado", "Monto", "Notas"],
+        [
+          "Reserva",
+          "Espacio",
+          "Tipo",
+          "Cliente",
+          "Inicio",
+          "Fin",
+          "Propósito",
+          "Estado",
+          "Monto",
+          "Notas",
+        ],
         reservas.map((reserva) => [
           reserva.id,
           reserva.espacio.nombre,
@@ -136,10 +149,7 @@ export function exportacionesRouter(): Router {
       );
 
       res.setHeader("Content-Type", "text/csv; charset=utf-8");
-      res.setHeader(
-        "Content-Disposition",
-        `attachment; filename="${nombreArchivo("reservas")}"`,
-      );
+      res.setHeader("Content-Disposition", `attachment; filename="${nombreArchivo("reservas")}"`);
       res.send(csv);
     }),
   );
@@ -168,10 +178,7 @@ export function exportacionesRouter(): Router {
       );
 
       res.setHeader("Content-Type", "text/csv; charset=utf-8");
-      res.setHeader(
-        "Content-Disposition",
-        `attachment; filename="${nombreArchivo("inventario")}"`,
-      );
+      res.setHeader("Content-Disposition", `attachment; filename="${nombreArchivo("inventario")}"`);
       res.send(csv);
     }),
   );
@@ -214,10 +221,7 @@ export function exportacionesRouter(): Router {
       );
 
       res.setHeader("Content-Type", "text/csv; charset=utf-8");
-      res.setHeader(
-        "Content-Disposition",
-        `attachment; filename="${nombreArchivo("reportes")}"`,
-      );
+      res.setHeader("Content-Disposition", `attachment; filename="${nombreArchivo("reportes")}"`);
       res.send(csv);
     }),
   );

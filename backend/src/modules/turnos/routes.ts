@@ -1,18 +1,13 @@
-import { Router } from "express";
+import { type Router } from "express";
 
-import { requireAuth, requireRole } from "../../middleware/auth.js";
+import { requireRole } from "../../middleware/auth.js";
 import { asyncHandler } from "../../middleware/async-handler.js";
-import {
-  crearTurnoSchema,
-  listarEmpleadosQuerySchema,
-  listarTurnosQuerySchema,
-} from "./schema.js";
+import { routerConAuth } from "../../middleware/router.js";
+import { crearTurnoSchema, listarEmpleadosQuerySchema, listarTurnosQuerySchema } from "./schema.js";
 import { crearTurno, listarEmpleados, listarTurnos } from "./service.js";
 
 export function turnosRouter(): Router {
-  const router = Router();
-
-  router.use(requireAuth);
+  const router = routerConAuth();
 
   // GET /api/turnos
   router.get(
@@ -38,9 +33,7 @@ export function turnosRouter(): Router {
 }
 
 export function empleadosRouter(): Router {
-  const router = Router();
-
-  router.use(requireAuth);
+  const router = routerConAuth();
 
   // GET /api/empleados
   router.get(

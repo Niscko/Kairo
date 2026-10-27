@@ -10,6 +10,7 @@ import {
   resolverPeriodo,
   type Periodo,
 } from "../../lib/periodos.js";
+import { completarReservasVencidas, estadoEfectivo } from "../reservas/service.js";
 import type { ReporteQuery } from "./schema.js";
 
 /** Horas de atención al día: se usa como capacidad de un espacio. */
@@ -93,62 +94,65 @@ export async function construir(query: ReporteQuery): Promise<ReporteDTO> {
   const inicioDate = new Date(periodo.start.replace(" ", "T"));
   const finDate = new Date(periodo.end.replace(" ", "T"));
 
-  const [
-    ventas,
-    reservas,
-    experiences,
-    itemsVendidos,
-    espacios,
-    costos,
-    recetas,
-  ] = await Promise.all([
-    prisma.venta.aggregate({
-      where: { fecha: { gte: inicioDate, lt: finDate } },
-      _sum: { total: true },
-    }),
-    prisma.reserva.findMany({
-      where: {
-        proposito: { not: "evento" },
-        estado: { not: "cancelada" },
-        inicio: { lt: finDate },
-        fin: { gt: inicioDate },
-      },
-      select: { id: true, monto: true, estado: true, inicio: true, fin: true, espacioId: true },
-    }),
-    prisma.experiencia.findMany({
-      where: {
-        estado: { not: "cancelada" },
-        inicio: { lt: finDate },
-        fin: { gt: inicioDate },
-      },
-      include: {
-        espacio: { select: { nombre: true, tipo: true, tarifaHora: true } },
-        participantes: { select: { clienteId: true } },
-        productos: { include: { producto: { select: { id: true } } } },
-      },
-    }),
-    prisma.ventaItem.findMany({
-      where: { venta: { fecha: { gte: inicioDate, lt: finDate } } },
-      select: {
-        cantidad: true,
-        precio: true,
-        productoId: true,
-        producto: { select: { nombre: true } },
-        venta: { select: { fecha: true } },
-      },
-    }),
-    prisma.espacio.findMany({ orderBy: { nombre: "asc" } }),
-    prisma.costo.findMany({ orderBy: [{ categoria: "asc" }, { concepto: "asc" }] }),
-    prisma.recetaItem.findMany({
-      include: { insumo: { select: { costoUnitario: true, factorConversion: true } } },
-    }),
-  ]);
+  // Las reservas que ya terminaron pasan a `completada` antes de medir. Es un
+  // barrido idempotente: sin él, una reserva creada por la API se quedaría en
+  // `confirmada` para siempre y el reporte la contaría como ingreso previsto.
+  await completarReservasVencidas();
+
+  const [ventas, reservas, experiences, itemsVendidos, espacios, costos, recetas] =
+    await Promise.all([
+      prisma.venta.aggregate({
+        where: { fecha: { gte: inicioDate, lt: finDate } },
+        _sum: { total: true },
+      }),
+      prisma.reserva.findMany({
+        where: {
+          proposito: { not: "evento" },
+          estado: { not: "cancelada" },
+          inicio: { lt: finDate },
+          fin: { gt: inicioDate },
+        },
+        select: { id: true, monto: true, estado: true, inicio: true, fin: true, espacioId: true },
+      }),
+      prisma.experiencia.findMany({
+        where: {
+          estado: { not: "cancelada" },
+          inicio: { lt: finDate },
+          fin: { gt: inicioDate },
+        },
+        include: {
+          espacio: { select: { nombre: true, tipo: true, tarifaHora: true } },
+          participantes: { select: { clienteId: true } },
+          productos: { include: { producto: { select: { id: true } } } },
+        },
+      }),
+      prisma.ventaItem.findMany({
+        where: { venta: { fecha: { gte: inicioDate, lt: finDate } } },
+        select: {
+          cantidad: true,
+          precio: true,
+          productoId: true,
+          producto: { select: { nombre: true } },
+          venta: { select: { fecha: true } },
+        },
+      }),
+      prisma.espacio.findMany({ orderBy: { nombre: "asc" } }),
+      prisma.costo.findMany({ orderBy: [{ categoria: "asc" }, { concepto: "asc" }] }),
+      prisma.recetaItem.findMany({
+        include: { insumo: { select: { costoUnitario: true, factorConversion: true } } },
+      }),
+    ]);
 
   // --- Ingresos por reservas ----------------------------------------------
-  const realizadas = reservas.filter(
-    (reserva) => reserva.estado === "completada" || reserva.estado === "en_curso",
-  );
-  const previstas = reservas.filter((reserva) => reserva.estado === "confirmada");
+  // El estado se deriva del horario, no solo de la columna: una reserva que
+  // ya terminó es ingreso realizado aunque el barrido aún no la haya
+  // marcado. Canceladas quedan fuera.
+  const ahora = new Date();
+  const realizadas = reservas.filter((reserva) => {
+    const estado = estadoEfectivo(reserva, ahora);
+    return estado === "completada" || estado === "en_curso";
+  });
+  const previstas = reservas.filter((reserva) => estadoEfectivo(reserva, ahora) === "confirmada");
 
   const reservasRealizadas = realizadas.reduce((suma, r) => suma + r.monto, 0);
   const reservasPrevistas = previstas.reduce((suma, r) => suma + r.monto, 0);
@@ -180,8 +184,7 @@ export async function construir(query: ReporteQuery): Promise<ReporteDTO> {
     const ingresos = experiencia.precio * participantes;
 
     const costoProductos = experiencia.productos.reduce(
-      (suma, item) =>
-        suma + Math.round((costoUnitario.get(item.producto.id) ?? 0) * item.cantidad),
+      (suma, item) => suma + Math.round((costoUnitario.get(item.producto.id) ?? 0) * item.cantidad),
       0,
     );
     const horas = hoursBetween(experiencia.inicio, experiencia.fin);
@@ -211,7 +214,10 @@ export async function construir(query: ReporteQuery): Promise<ReporteDTO> {
   // El costo de insumos es el de los productos efectivamente vendidos.
   let costoInsumos = 0;
   const porDia = new Map<string, { ingresos: number; insumos: number }>();
-  const topMap = new Map<number, { id: number; nombre: string; cantidad: number; ingresos: number }>();
+  const topMap = new Map<
+    number,
+    { id: number; nombre: string; cantidad: number; ingresos: number }
+  >();
 
   for (const item of itemsVendidos) {
     const costoItem = Math.round((costoUnitario.get(item.productoId) ?? 0) * item.cantidad);
@@ -235,9 +241,7 @@ export async function construir(query: ReporteQuery): Promise<ReporteDTO> {
   }
 
   // Los costos fijos se prorratean sobre el período analizado.
-  const periodosRelevantes = new Set(
-    diasDelPeriodo(periodo).map((dia) => dia.slice(0, 7)),
-  );
+  const periodosRelevantes = new Set(diasDelPeriodo(periodo).map((dia) => dia.slice(0, 7)));
   const costosDelPeriodo = costos.filter((costo) => periodosRelevantes.has(costo.periodo));
 
   const detalleCostos = costosDelPeriodo.map((costo) => ({
@@ -279,17 +283,14 @@ export async function construir(query: ReporteQuery): Promise<ReporteDTO> {
       nombre: espacio.nombre,
       tipo: espacio.tipo,
       horas: Math.round(horas * 10) / 10,
-      porcentaje:
-        capacidadTotal > 0 ? Math.round((horas / capacidadTotal) * 1000) / 10 : 0,
+      porcentaje: capacidadTotal > 0 ? Math.round((horas / capacidadTotal) * 1000) / 10 : 0,
     };
   });
 
   // La ocupación promedio solo mira los espacios que se pueden reservar por
   // hora: un puesto o una sala. Una mesa de cafetería no compite por el mismo
   // horario.
-  const rentables = utilizacion.filter(
-    (item) => item.tipo === "puesto" || item.tipo === "sala",
-  );
+  const rentables = utilizacion.filter((item) => item.tipo === "puesto" || item.tipo === "sala");
   const ocupacionPromedio =
     rentables.length > 0
       ? Math.round(
@@ -361,9 +362,7 @@ export async function construir(query: ReporteQuery): Promise<ReporteDTO> {
     utilizacion,
     demanda,
     flujo,
-    topProductos: [...topMap.values()]
-      .sort((a, b) => b.ingresos - a.ingresos)
-      .slice(0, 6),
+    topProductos: [...topMap.values()].sort((a, b) => b.ingresos - a.ingresos).slice(0, 6),
     experiencias: detalleExperiencias,
   };
 }

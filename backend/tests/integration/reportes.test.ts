@@ -3,37 +3,29 @@ import request from "supertest";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { createApp } from "../../src/app.js";
+import { iniciarSesion, type Sesion } from "./helpers.js";
 
 const prisma = new PrismaClient();
 const app = createApp();
 
-const PASSWORD = "kairo123";
-
-let adminToken = "";
-let baristaToken = "";
-let clienteToken = "";
+let admin: Sesion;
+let barista: Sesion;
+let cliente: Sesion;
 
 beforeAll(async () => {
   await prisma.$connect();
-  adminToken = await login("admin@kairo.local");
-  baristaToken = await login("barista@kairo.local");
-  clienteToken = await login("valentina@kairo.local");
+  admin = await iniciarSesion(app, "admin@kairo.local");
+  barista = await iniciarSesion(app, "barista@kairo.local");
+  cliente = await iniciarSesion(app, "valentina@kairo.local");
 });
 
 afterAll(async () => {
   await prisma.$disconnect();
 });
 
-async function login(email: string): Promise<string> {
-  const response = await request(app)
-    .post("/api/auth/login")
-    .send({ email, password: PASSWORD })
-    .expect(200);
-  return response.body.accessToken as string;
-}
-
-function as(token: string) {
-  return { Authorization: `Bearer ${token}` };
+/** Cabeceras de escritura: token de acceso y de CSRF. */
+function as(sesion: Sesion) {
+  return sesion.headers;
 }
 
 describe("GET /api/reportes", () => {
@@ -42,15 +34,12 @@ describe("GET /api/reportes", () => {
   });
 
   it("solo la dirección puede verlo: el personal recibe 403", async () => {
-    await request(app).get("/api/reportes").set(as(baristaToken)).expect(403);
-    await request(app).get("/api/reportes").set(as(clienteToken)).expect(403);
+    await request(app).get("/api/reportes").set(as(barista)).expect(403);
+    await request(app).get("/api/reportes").set(as(cliente)).expect(403);
   });
 
   it("devuelve la estructura completa del reporte", async () => {
-    const response = await request(app)
-      .get("/api/reportes?rango=21d")
-      .set(as(adminToken))
-      .expect(200);
+    const response = await request(app).get("/api/reportes?rango=21d").set(as(admin)).expect(200);
 
     expect(response.body.rango).toBe("21d");
     expect(response.body).toHaveProperty("desde");
@@ -68,10 +57,7 @@ describe("GET /api/reportes", () => {
   });
 
   it("la serie de demanda cubre las horas de atención", async () => {
-    const response = await request(app)
-      .get("/api/reportes?rango=7d")
-      .set(as(adminToken))
-      .expect(200);
+    const response = await request(app).get("/api/reportes?rango=7d").set(as(admin)).expect(200);
 
     // De 07:00 a 22:00, ambas franjas incluidas.
     expect(response.body.demanda).toHaveLength(16);
@@ -80,19 +66,13 @@ describe("GET /api/reportes", () => {
   });
 
   it("el flujo diario tiene un punto por cada día del período", async () => {
-    const response = await request(app)
-      .get("/api/reportes?rango=7d")
-      .set(as(adminToken))
-      .expect(200);
+    const response = await request(app).get("/api/reportes?rango=7d").set(as(admin)).expect(200);
 
     expect(response.body.flujo).toHaveLength(7);
   });
 
   it("el rango de hoy cubre un solo día", async () => {
-    const response = await request(app)
-      .get("/api/reportes?rango=hoy")
-      .set(as(adminToken))
-      .expect(200);
+    const response = await request(app).get("/api/reportes?rango=hoy").set(as(admin)).expect(200);
 
     expect(response.body.flujo).toHaveLength(1);
   });
@@ -100,7 +80,7 @@ describe("GET /api/reportes", () => {
   it("acepta un rango personalizado", async () => {
     const response = await request(app)
       .get("/api/reportes?rango=custom&desde=2026-03-01&hasta=2026-03-10")
-      .set(as(adminToken))
+      .set(as(admin))
       .expect(200);
 
     expect(response.body.desde).toBe("2026-03-01");
@@ -112,7 +92,7 @@ describe("GET /api/reportes", () => {
     // El formato se valida en el borde, antes de resolver el período.
     const response = await request(app)
       .get("/api/reportes?rango=custom&desde=basura&hasta=2026-03-10")
-      .set(as(adminToken))
+      .set(as(admin))
       .expect(422);
 
     expect(response.body.error.code).toBe("VALIDATION_ERROR");
@@ -122,7 +102,7 @@ describe("GET /api/reportes", () => {
     // Con formato válido pero sin fecha, lo rechaza la resolución del período.
     const response = await request(app)
       .get("/api/reportes?rango=custom&desde=2026-03-10")
-      .set(as(adminToken))
+      .set(as(admin))
       .expect(422);
 
     expect(response.body.error.message).toMatch(/fecha inicial y una final/);
@@ -131,29 +111,27 @@ describe("GET /api/reportes", () => {
   it("rechaza un rango invertido", async () => {
     await request(app)
       .get("/api/reportes?rango=custom&desde=2026-03-10&hasta=2026-03-01")
-      .set(as(adminToken))
+      .set(as(admin))
       .expect(422);
   });
 
   it("el margen es la diferencia entre ingresos y egresos", async () => {
-    const response = await request(app)
-      .get("/api/reportes?rango=21d")
-      .set(as(adminToken))
-      .expect(200);
+    const response = await request(app).get("/api/reportes?rango=21d").set(as(admin)).expect(200);
 
     const { ingresos, egresos, margenRealizado } = response.body;
     expect(margenRealizado).toBe(ingresos.total - egresos.total);
   });
 
   it("los ingresos por reservas separan lo realizado de lo previsto", async () => {
-    const response = await request(app)
-      .get("/api/reportes?rango=21d")
-      .set(as(adminToken))
-      .expect(200);
+    const response = await request(app).get("/api/reportes?rango=21d").set(as(admin)).expect(200);
 
     const { reservasRealizadas, reservasPrevistas, total } = response.body.ingresos;
-    // Lo previsto no está dentro del total: todavía no se ha facturado.
-    expect(total).toBeLessThan(reservasRealizadas + reservasPrevistas + response.body.ingresos.ventas);
+    // El total es la venta más lo ya realizado. Lo previsto no está dentro:
+    // todavía no se ha facturado.
+    expect(total).toBe(response.body.ingresos.ventas + reservasRealizadas);
+    expect(total).toBeLessThanOrEqual(
+      response.body.ingresos.ventas + reservasRealizadas + reservasPrevistas,
+    );
   });
 });
 
@@ -181,10 +159,7 @@ describe("costo de insumos en el reporte", () => {
   });
 
   it("el costo de insumos del reporte es proporcional a lo vendido", async () => {
-    const response = await request(app)
-      .get("/api/reportes?rango=21d")
-      .set(as(adminToken))
-      .expect(200);
+    const response = await request(app).get("/api/reportes?rango=21d").set(as(admin)).expect(200);
 
     // Con un café a 4,20 el gramo, el costo de insumos no puede ser millones.
     expect(response.body.egresos.insumos).toBeLessThan(2_000_000);

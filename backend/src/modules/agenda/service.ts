@@ -1,3 +1,4 @@
+import type { Identidad } from "../../lib/clientes.js";
 import { dateISO } from "../../lib/domain.js";
 import { prisma } from "../../lib/prisma.js";
 import { formatDateTimeLocal } from "../reservas/schema.js";
@@ -58,8 +59,10 @@ export interface AgendaDTO {
  */
 export async function construir(
   query: AgendaQuery,
-  contexto: { clienteId: number | null },
+  contexto: { identidad: Identidad },
 ): Promise<AgendaDTO> {
+  const { identidad } = contexto;
+  const esCliente = identidad.rol === "cliente";
   const dia = query.dia ?? dateISO(new Date());
   const [year, month, day] = dia.split("-").map(Number);
   // Los turnos se almacenan en UTC a medianoche (un día sin hora), así que el
@@ -75,7 +78,8 @@ export async function construir(
       where: {
         inicio: { lt: fin },
         fin: { gt: inicio },
-        ...(contexto.clienteId !== null ? { clienteId: contexto.clienteId } : {}),
+        // Un cliente solo ve sus propias reservas.
+        ...(esCliente ? { clienteId: identidad.clienteId! } : {}),
       },
       include: {
         espacio: { select: { nombre: true, tipo: true } },
@@ -83,8 +87,9 @@ export async function construir(
       },
       orderBy: { inicio: "asc" },
     }),
+    // El turno del personal es información interna: un cliente no lo ve.
     prisma.turno.findMany({
-      where: { fecha: inicio },
+      where: esCliente ? { id: -1 } : { fecha: inicio },
       include: { empleado: { include: { usuario: { select: { nombre: true } } } } },
       orderBy: [{ horaInicio: "asc" }],
     }),
@@ -106,12 +111,15 @@ export async function construir(
     }),
   ]);
 
-  // Qué espacios están ocupados en este momento.
+  // Qué espacios están ocupados en este momento. Un cliente solo sabe de los
+  // espacios que él tiene reservados: la presencia de otros clientes en el
+  // local no es información suya.
   const ocupadas = await prisma.reserva.findMany({
     where: {
       estado: { in: ["confirmada", "en_curso"] },
       inicio: { lte: ahora },
       fin: { gt: ahora },
+      ...(esCliente ? { clienteId: identidad.clienteId! } : {}),
     },
     select: { espacioId: true, fin: true },
   });

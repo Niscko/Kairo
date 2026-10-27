@@ -5,6 +5,7 @@ import request from "supertest";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { createApp } from "../../src/app.js";
+import { iniciarSesion, soloLectura, type Sesion } from "./helpers.js";
 
 /**
  * Pruebas de integración de los módulos de dominio contra la base real.
@@ -12,34 +13,31 @@ import { createApp } from "../../src/app.js";
 const prisma = new PrismaClient();
 const app = createApp();
 
-const PASSWORD = "kairo123";
 const suffix = randomUUID().slice(0, 8);
 
-let adminToken = "";
-let baristaToken = "";
-let clienteToken = "";
+let admin: Sesion;
+let barista: Sesion;
+let cliente: Sesion;
 
 beforeAll(async () => {
   await prisma.$connect();
-  adminToken = await login("admin@kairo.local");
-  baristaToken = await login("barista@kairo.local");
-  clienteToken = await login("valentina@kairo.local");
+  admin = await iniciarSesion(app, "admin@kairo.local");
+  barista = await iniciarSesion(app, "barista@kairo.local");
+  cliente = await iniciarSesion(app, "valentina@kairo.local");
 });
 
 afterAll(async () => {
   await prisma.$disconnect();
 });
 
-async function login(email: string): Promise<string> {
-  const response = await request(app)
-    .post("/api/auth/login")
-    .send({ email, password: PASSWORD })
-    .expect(200);
-  return response.body.accessToken as string;
+/** Cabeceras de escritura: token de acceso y de CSRF. */
+function as(sesion: Sesion) {
+  return sesion.headers;
 }
 
-function as(token: string) {
-  return { Authorization: `Bearer ${token}` };
+/** Cabeceras de lectura: basta el token de acceso. */
+function ro(token: string) {
+  return soloLectura(token);
 }
 
 /** Fecha local en "YYYY-MM-DD", con días de margen sobre hoy. */
@@ -54,10 +52,7 @@ function fecha(offsetDias: number): string {
 
 describe("GET /api/dashboard", () => {
   it("devuelve el panel completo a la dirección", async () => {
-    const response = await request(app)
-      .get("/api/dashboard")
-      .set(as(adminToken))
-      .expect(200);
+    const response = await request(app).get("/api/dashboard").set(as(admin)).expect(200);
 
     expect(response.body.rol).toBe("admin");
     expect(Array.isArray(response.body.espacios)).toBe(true);
@@ -68,15 +63,23 @@ describe("GET /api/dashboard", () => {
   });
 
   it("omite los costos al cliente y le muestra su consumo", async () => {
-    const response = await request(app)
-      .get("/api/dashboard")
-      .set(as(clienteToken))
-      .expect(200);
+    const response = await request(app).get("/api/dashboard").set(as(cliente)).expect(200);
 
     expect(response.body.rol).toBe("cliente");
     expect(response.body.costosPendientes).toBeUndefined();
     expect(response.body.costosPendientesTotal).toBeUndefined();
     expect(response.body.consumoMes).toBeGreaterThanOrEqual(0);
+  });
+
+  it("no le enseña al cliente el inventario, los permisos ni los turnos", async () => {
+    const response = await request(app).get("/api/dashboard").set(as(cliente)).expect(200);
+
+    // Son datos del negocio: el personal los ve, el cliente no.
+    expect(response.body.stock).toEqual([]);
+    expect(response.body.permisos).toEqual([]);
+    expect(response.body.turnos).toEqual([]);
+    // La caja del día tampoco.
+    expect(response.body.ventasHoy.total).toBe(0);
   });
 
   it("exige autenticación", async () => {
@@ -95,7 +98,7 @@ describe("POST /api/reservas", () => {
 
     const response = await request(app)
       .post("/api/reservas")
-      .set(as(clienteToken))
+      .set(as(cliente))
       .send({
         espacioId: espacio.id,
         inicio: `${dia} 08:00`,
@@ -118,7 +121,7 @@ describe("POST /api/reservas", () => {
 
     const response = await request(app)
       .post("/api/reservas")
-      .set(as(clienteToken))
+      .set(as(cliente))
       .send({
         espacioId: puesto.id,
         inicio: `${dia} 08:00`,
@@ -148,13 +151,13 @@ describe("POST /api/reservas", () => {
 
     const primera = await request(app)
       .post("/api/reservas")
-      .set(as(clienteToken))
+      .set(as(cliente))
       .send(payload)
       .expect(201);
 
     const segunda = await request(app)
       .post("/api/reservas")
-      .set(as(clienteToken))
+      .set(as(cliente))
       .send(payload)
       .expect(409);
     expect(segunda.body.error.message).toMatch(/ya está reservado/);
@@ -170,7 +173,7 @@ describe("POST /api/reservas", () => {
 
     await request(app)
       .post("/api/reservas")
-      .set(as(clienteToken))
+      .set(as(cliente))
       .send({
         espacioId: espacio.id,
         inicio: `${dia} 05:00`,
@@ -186,19 +189,44 @@ describe("POST /api/reservas", () => {
     });
     await prisma.espacio.update({ where: { id: espacio.id }, data: { estado: "mantenimiento" } });
 
-    const dia = fecha(7);
+    // El espacio vuelve a estar disponible pase lo que pase: si el test falla
+    // antes del restore, queda en mantenimiento y las pruebas siguientes no
+    // encuentran ningún espacio de ese tipo.
+    try {
+      const dia = fecha(7);
+      await request(app)
+        .post("/api/reservas")
+        .set(as(cliente))
+        .send({
+          espacioId: espacio.id,
+          inicio: `${dia} 08:00`,
+          fin: `${dia} 10:00`,
+          proposito: "trabajo",
+        })
+        .expect(409);
+    } finally {
+      await prisma.espacio.update({ where: { id: espacio.id }, data: { estado: "disponible" } });
+    }
+  });
+
+  it("rechaza una reserva en el pasado", async () => {
+    const espacio = await prisma.espacio.findFirstOrThrow({
+      where: { tipo: "sala", estado: "disponible" },
+    });
+    // Una reserva que ya pasó no se puede usar ni facturar: no tiene sentido
+    // crearla.
+    const dia = fecha(-2);
+
     await request(app)
       .post("/api/reservas")
-      .set(as(clienteToken))
+      .set(as(cliente))
       .send({
         espacioId: espacio.id,
         inicio: `${dia} 08:00`,
         fin: `${dia} 10:00`,
         proposito: "trabajo",
       })
-      .expect(409);
-
-    await prisma.espacio.update({ where: { id: espacio.id }, data: { estado: "disponible" } });
+      .expect(422);
   });
 
   it("impide que un cliente reserve en nombre de otro", async () => {
@@ -212,7 +240,7 @@ describe("POST /api/reservas", () => {
 
     const response = await request(app)
       .post("/api/reservas")
-      .set(as(clienteToken))
+      .set(as(cliente))
       .send({
         espacioId: espacio.id,
         clienteId: otro.id,
@@ -241,7 +269,7 @@ describe("GET /api/reservas", () => {
     const hoy = fecha(0);
     const response = await request(app)
       .get(`/api/reservas?dia=${hoy}`)
-      .set(as(clienteToken))
+      .set(as(cliente))
       .expect(200);
 
     const propio = await prisma.cliente.findFirstOrThrow({
@@ -254,15 +282,9 @@ describe("GET /api/reservas", () => {
 
   it("el personal ve todas las reservas del día", async () => {
     const hoy = fecha(0);
-    const response = await request(app)
-      .get(`/api/reservas?dia=${hoy}`)
-      .set(as(adminToken))
-      .expect(200);
+    const response = await request(app).get(`/api/reservas?dia=${hoy}`).set(as(admin)).expect(200);
 
-    const propias = await request(app)
-      .get(`/api/reservas?dia=${hoy}`)
-      .set(as(clienteToken))
-      .expect(200);
+    const propias = await request(app).get(`/api/reservas?dia=${hoy}`).set(as(cliente)).expect(200);
 
     expect(response.body.reservas.length).toBeGreaterThanOrEqual(propias.body.reservas.length);
   });
@@ -277,7 +299,7 @@ describe("PATCH /api/reservas/:id", () => {
 
     const creada = await request(app)
       .post("/api/reservas")
-      .set(as(clienteToken))
+      .set(as(cliente))
       .send({
         espacioId: espacio.id,
         inicio: `${dia} 08:00`,
@@ -288,7 +310,7 @@ describe("PATCH /api/reservas/:id", () => {
 
     await request(app)
       .patch(`/api/reservas/${creada.body.id}`)
-      .set(as(clienteToken))
+      .set(as(cliente))
       .send({ estado: "cancelada" })
       .expect(200);
 
@@ -307,7 +329,7 @@ describe("PATCH /api/reservas/:id", () => {
 
     const creada = await request(app)
       .post("/api/reservas")
-      .set(as(clienteToken))
+      .set(as(cliente))
       .send({
         espacioId: espacio.id,
         inicio: `${dia} 08:00`,
@@ -318,7 +340,7 @@ describe("PATCH /api/reservas/:id", () => {
 
     await request(app)
       .patch(`/api/reservas/${creada.body.id}`)
-      .set(as(clienteToken))
+      .set(as(cliente))
       .send({ estado: "completada" })
       .expect(422);
 
@@ -344,7 +366,7 @@ describe("POST /api/ventas", () => {
 
     const response = await request(app)
       .post("/api/ventas")
-      .set(as(baristaToken))
+      .set(as(barista))
       .send({
         metodoPago: "efectivo",
         items: [{ productoId: producto.id, cantidad: 2 }],
@@ -357,10 +379,7 @@ describe("POST /api/ventas", () => {
       where: { id: insumo.insumoId },
       select: { stock: true },
     });
-    expect(stockDespues.stock).toBeCloseTo(
-      stockAntes.stock - insumo.cantidad * 2,
-      5,
-    );
+    expect(stockDespues.stock).toBeCloseTo(stockAntes.stock - insumo.cantidad * 2, 5);
 
     await prisma.venta.delete({ where: { id: response.body.id } });
     await prisma.insumo.update({
@@ -376,7 +395,7 @@ describe("POST /api/ventas", () => {
 
     await request(app)
       .post("/api/ventas")
-      .set(as(baristaToken))
+      .set(as(barista))
       .send({
         metodoPago: "efectivo",
         items: [{ productoId: producto.id, cantidad: 1 }],
@@ -391,7 +410,7 @@ describe("POST /api/ventas", () => {
 
     const response = await request(app)
       .post("/api/ventas")
-      .set(as(baristaToken))
+      .set(as(barista))
       .send({
         metodoPago: "tarjeta",
         items: [{ productoId: producto.id, cantidad: 1 }],
@@ -405,7 +424,7 @@ describe("POST /api/ventas", () => {
   it("rechaza un pedido vacío", async () => {
     await request(app)
       .post("/api/ventas")
-      .set(as(baristaToken))
+      .set(as(barista))
       .send({ metodoPago: "efectivo", items: [] })
       .expect(422);
   });
@@ -413,7 +432,7 @@ describe("POST /api/ventas", () => {
   it("rechaza un medio de pago inválido", async () => {
     await request(app)
       .post("/api/ventas")
-      .set(as(baristaToken))
+      .set(as(barista))
       .send({ metodoPago: "bitcoin", items: [{ productoId: 1, cantidad: 1 }] })
       .expect(422);
   });
@@ -428,7 +447,7 @@ describe("POST /api/movimientos", () => {
 
     const response = await request(app)
       .post("/api/movimientos")
-      .set(as(baristaToken))
+      .set(as(barista))
       .send({ insumoId: insumo.id, tipo: "entrada", cantidad: 5, motivo: "Prueba" })
       .expect(201);
 
@@ -447,7 +466,7 @@ describe("POST /api/movimientos", () => {
 
     await request(app)
       .post("/api/movimientos")
-      .set(as(baristaToken))
+      .set(as(barista))
       .send({ insumoId: insumo.id, tipo: "salida", cantidad: 999_999 })
       .expect(409);
   });
@@ -462,17 +481,69 @@ describe("POST /api/turnos", () => {
 
     const response = await request(app)
       .post("/api/turnos")
-      .set(as(adminToken))
+      .set(as(admin))
       .send({
         empleadoId: empleado.id,
         fecha: dia,
-        horaInicio: "06:00",
-        horaFin: "07:00",
+        horaInicio: "07:00",
+        horaFin: "15:00",
         area: "Prueba",
       })
       .expect(201);
 
     await prisma.turno.delete({ where: { id: response.body.id } });
+  });
+
+  it("rechaza un turno fuera del horario de atención", async () => {
+    const empleado = await prisma.empleado.findFirstOrThrow();
+    const dia = fecha(12);
+
+    // 06:00 está antes de la apertura: el local atiende de 07:00 a 23:00.
+    await request(app)
+      .post("/api/turnos")
+      .set(as(admin))
+      .send({
+        empleadoId: empleado.id,
+        fecha: dia,
+        horaInicio: "06:00",
+        horaFin: "12:00",
+        area: "Prueba",
+      })
+      .expect(422);
+  });
+
+  it("rechaza un turno que no alineado a bloques de 30 minutos", async () => {
+    const empleado = await prisma.empleado.findFirstOrThrow();
+    const dia = fecha(13);
+
+    await request(app)
+      .post("/api/turnos")
+      .set(as(admin))
+      .send({
+        empleadoId: empleado.id,
+        fecha: dia,
+        horaInicio: "07:07",
+        horaFin: "15:00",
+        area: "Prueba",
+      })
+      .expect(422);
+  });
+
+  it("rechaza un turno de más de 14 horas", async () => {
+    const empleado = await prisma.empleado.findFirstOrThrow();
+    const dia = fecha(14);
+
+    await request(app)
+      .post("/api/turnos")
+      .set(as(admin))
+      .send({
+        empleadoId: empleado.id,
+        fecha: dia,
+        horaInicio: "07:00",
+        horaFin: "23:30",
+        area: "Prueba",
+      })
+      .expect(422);
   });
 
   it("rechaza un turno que se cruza con otro existente", async () => {
@@ -486,7 +557,7 @@ describe("POST /api/turnos", () => {
 
     await request(app)
       .post("/api/turnos")
-      .set(as(adminToken))
+      .set(as(admin))
       .send({
         empleadoId: empleado.id,
         fecha: dia,
@@ -500,7 +571,7 @@ describe("POST /api/turnos", () => {
   it("un empleado no puede crear turnos", async () => {
     await request(app)
       .post("/api/turnos")
-      .set(as(baristaToken))
+      .set(as(barista))
       .send({
         empleadoId: 1,
         fecha: fecha(12),
@@ -523,7 +594,7 @@ describe("POST /api/experiencias", () => {
 
     const response = await request(app)
       .post("/api/experiencias")
-      .set(as(adminToken))
+      .set(as(admin))
       .send({
         nombre: `Experiencia de prueba ${suffix}`,
         espacioId: espacio.id,
@@ -565,7 +636,7 @@ describe("POST /api/experiencias", () => {
 
     await request(app)
       .post("/api/experiencias")
-      .set(as(adminToken))
+      .set(as(admin))
       .send({
         nombre: `Capacidad excesiva ${suffix}`,
         espacioId: espacio.id,
@@ -596,13 +667,13 @@ describe("POST /api/experiencias", () => {
 
     const primera = await request(app)
       .post("/api/experiencias")
-      .set(as(adminToken))
+      .set(as(admin))
       .send(payload)
       .expect(201);
 
     await request(app)
       .post("/api/experiencias")
-      .set(as(adminToken))
+      .set(as(admin))
       .send({ ...payload, nombre: `Doble asignación B ${suffix}` })
       .expect(409);
 
@@ -619,22 +690,33 @@ describe("POST /api/experiencias", () => {
 
 describe("PATCH /api/clientes/:id", () => {
   it("actualiza la membresía de un cliente", async () => {
-    const cliente = await prisma.cliente.findFirstOrThrow({
-      where: { membresia: "ninguna" },
-    });
+    // Se toma cualquier cliente y se restauran sus datos al final: la
+    // membresía es parte del estado sembrado y no debe quedar alterada.
+    const cliente = await prisma.cliente.findFirstOrThrow();
+    const original = {
+      membresia: cliente.membresia,
+      membresiaVence: cliente.membresiaVence,
+    };
 
-    const response = await request(app)
-      .patch(`/api/clientes/${cliente.id}`)
-      .set(as(adminToken))
-      .send({ membresia: "dia", membresiaVence: fecha(1) })
-      .expect(200);
+    try {
+      const response = await request(app)
+        .patch(`/api/clientes/${cliente.id}`)
+        .set(as(admin))
+        .send({ membresia: "dia", membresiaVence: fecha(1) })
+        .expect(200);
 
-    expect(response.body.membresia).toBe("dia");
-    expect(response.body.membresiaVence).toBe(fecha(1));
+      expect(response.body.membresia).toBe("dia");
+      expect(response.body.membresiaVence).toBe(fecha(1));
+    } finally {
+      await prisma.cliente.update({
+        where: { id: cliente.id },
+        data: { membresia: original.membresia, membresiaVence: original.membresiaVence },
+      });
+    }
   });
 
   it("un cliente no puede consultar el listado de clientes", async () => {
-    await request(app).get("/api/clientes").set(as(clienteToken)).expect(403);
+    await request(app).get("/api/clientes").set(as(cliente)).expect(403);
   });
 });
 
@@ -644,7 +726,7 @@ describe("POST /api/usuarios", () => {
 
     const response = await request(app)
       .post("/api/usuarios")
-      .set(as(adminToken))
+      .set(as(admin))
       .send({
         nombre: "Persona de Prueba",
         email,
@@ -669,7 +751,7 @@ describe("POST /api/usuarios", () => {
   it("rechaza un correo duplicado", async () => {
     await request(app)
       .post("/api/usuarios")
-      .set(as(adminToken))
+      .set(as(admin))
       .send({
         nombre: "Duplicado",
         email: "admin@kairo.local",
@@ -682,7 +764,7 @@ describe("POST /api/usuarios", () => {
   it("un empleado no puede crear cuentas", async () => {
     await request(app)
       .post("/api/usuarios")
-      .set(as(baristaToken))
+      .set(as(barista))
       .send({
         nombre: "No autorizado",
         email: `no.autorizado.${suffix}@kairo.local`,
@@ -693,21 +775,120 @@ describe("POST /api/usuarios", () => {
   });
 });
 
+describe("una cuenta con rol cliente siempre tiene perfil de cliente", () => {
+  it("crea el perfil al cambiar el rol y lo elimina al salir de él", async () => {
+    const email = `cambio.rol.${suffix}@kairo.local`;
+
+    const creado = await request(app)
+      .post("/api/usuarios")
+      .set(as(admin))
+      .send({
+        nombre: "Cambio de Rol",
+        email,
+        password: "contrasenaSegura123",
+        rol: "empleado",
+        cargo: "prueba",
+      })
+      .expect(201);
+
+    const usuario = await prisma.usuario.findUniqueOrThrow({
+      where: { email },
+      include: { empleado: true, cliente: true },
+    });
+    expect(usuario.empleado).not.toBeNull();
+    expect(usuario.cliente).toBeNull();
+
+    // Cambiar el rol a cliente crea el perfil correspondiente en la misma
+    // transacción: sin él, la cuenta quedaría en un estado inconsistente.
+    await request(app)
+      .patch(`/api/usuarios/${creado.body.id}`)
+      .set(as(admin))
+      .send({ rol: "cliente" })
+      .expect(200);
+
+    const trasCambio = await prisma.usuario.findUniqueOrThrow({
+      where: { id: usuario.id },
+      include: { empleado: true, cliente: true },
+    });
+    expect(trasCambio.rol).toBe("cliente");
+    expect(trasCambio.cliente).not.toBeNull();
+    expect(trasCambio.empleado).toBeNull();
+
+    // Y volver a empleado la deja con perfil de personal.
+    await request(app)
+      .patch(`/api/usuarios/${creado.body.id}`)
+      .set(as(admin))
+      .send({ rol: "empleado" })
+      .expect(200);
+
+    const trasVolver = await prisma.usuario.findUniqueOrThrow({
+      where: { id: usuario.id },
+      include: { empleado: true, cliente: true },
+    });
+    expect(trasVolver.empleado).not.toBeNull();
+    expect(trasVolver.cliente).toBeNull();
+
+    await prisma.usuario.delete({ where: { id: usuario.id } });
+  });
+
+  it("una cuenta cliente sin perfil no puede tocar datos de otros", async () => {
+    // Se reproduce a mano el estado inconsistente: rol `cliente` sin fila en
+    // `clientes`. Antes, esa cuenta se colaba en las rutas del personal.
+    const email = `inconsistente.${suffix}@kairo.local`;
+
+    const creado = await request(app)
+      .post("/api/usuarios")
+      .set(as(admin))
+      .send({
+        nombre: "Cuenta Inconsistente",
+        email,
+        password: "contrasenaSegura123",
+        rol: "cliente",
+      })
+      .expect(201);
+
+    await prisma.cliente.deleteMany({ where: { usuarioId: creado.body.id } });
+
+    const sesionInconsistente = await iniciarSesion(app, email, "contrasenaSegura123");
+
+    // Ni la agenda ni el panel le revelan la actividad del local.
+    await request(app).get("/api/agenda").set(ro(sesionInconsistente.token)).expect(403);
+    await request(app).get("/api/dashboard").set(ro(sesionInconsistente.token)).expect(403);
+
+    // Y tampoco puede cancelar una reserva ajena.
+    const reservaAjena = await prisma.reserva.findFirstOrThrow({
+      where: { clienteId: { not: null } },
+    });
+    await request(app)
+      .patch(`/api/reservas/${reservaAjena.id}`)
+      .set(sesionInconsistente.headers)
+      .send({ estado: "cancelada" })
+      .expect(403);
+
+    const sinCambiar = await prisma.reserva.findUniqueOrThrow({
+      where: { id: reservaAjena.id },
+    });
+    expect(sinCambiar.estado).toBe(reservaAjena.estado);
+
+    await prisma.usuario.delete({ where: { id: creado.body.id } });
+  });
+});
+
 describe("GET /api/empleados", () => {
   it("lista al personal con su salario para la dirección", async () => {
-    const response = await request(app).get("/api/empleados").set(as(adminToken)).expect(200);
+    const response = await request(app).get("/api/empleados").set(as(admin)).expect(200);
 
     expect(Array.isArray(response.body.empleados)).toBe(true);
     expect(response.body.empleados.length).toBeGreaterThanOrEqual(5);
-    const admin = response.body.empleados.find(
+    const adminEmpleado = response.body.empleados.find(
       (empleado: { email: string }) => empleado.email === "admin@kairo.local",
     );
-    expect(admin).toMatchObject({ cargo: "administrador" });
-    expect(admin.salario).toBeGreaterThan(0);
+    expect(adminEmpleado).toMatchObject({ cargo: "administrador" });
+    expect(adminEmpleado.salario).toBeGreaterThan(0);
   });
 
   it("oculta el salario a un empleado", async () => {
-    const response = await request(app).get("/api/empleados").set(as(baristaToken)).expect(200);
+    const response = await request(app).get("/api/empleados").set(as(barista)).expect(200);
 
     expect(response.body.empleados.length).toBeGreaterThan(0);
     for (const empleado of response.body.empleados) {
@@ -716,14 +897,14 @@ describe("GET /api/empleados", () => {
   });
 
   it("no está disponible para un cliente", async () => {
-    await request(app).get("/api/empleados").set(as(clienteToken)).expect(403);
+    await request(app).get("/api/empleados").set(as(cliente)).expect(403);
   });
 
   it("un empleado creado con salario aparece en la lista", async () => {
     const email = `salario.${suffix}@kairo.local`;
     await request(app)
       .post("/api/usuarios")
-      .set(as(adminToken))
+      .set(as(admin))
       .send({
         nombre: "Persona con salario",
         email,
@@ -734,8 +915,10 @@ describe("GET /api/empleados", () => {
       })
       .expect(201);
 
-    const response = await request(app).get("/api/empleados").set(as(adminToken)).expect(200);
-    const creado = response.body.empleados.find((empleado: { email: string }) => empleado.email === email);
+    const response = await request(app).get("/api/empleados").set(as(admin)).expect(200);
+    const creado = response.body.empleados.find(
+      (empleado: { email: string }) => empleado.email === email,
+    );
     expect(creado).toMatchObject({ cargo: "barista", salario: 1_800_000 });
 
     const usuario = await prisma.usuario.findUniqueOrThrow({ where: { email } });
@@ -749,13 +932,15 @@ describe("POST /api/productos", () => {
     const nombre = `Servicio de prueba ${suffix}`;
     const response = await request(app)
       .post("/api/productos")
-      .set(as(adminToken))
+      .set(as(admin))
       .send({ nombre, categoria: "servicio", precio: 35_000, descripcion: "Alquiler por hora" })
       .expect(201);
     expect(response.body.id).toBeGreaterThan(0);
 
-    const lista = await request(app).get("/api/productos?pageSize=100").set(as(adminToken)).expect(200);
-    const creado = lista.body.productos.find((producto: { nombre: string }) => producto.nombre === nombre);
+    const lista = await request(app).get("/api/productos?pageSize=100").set(as(admin)).expect(200);
+    const creado = lista.body.productos.find(
+      (producto: { nombre: string }) => producto.nombre === nombre,
+    );
     expect(creado).toMatchObject({ categoria: "servicio", precio: 35_000, esAlcohol: false });
 
     await prisma.producto.delete({ where: { id: response.body.id as number } });
@@ -764,7 +949,7 @@ describe("POST /api/productos", () => {
   it("rechaza un nombre repetido", async () => {
     await request(app)
       .post("/api/productos")
-      .set(as(adminToken))
+      .set(as(admin))
       .send({ nombre: "Americano", categoria: "bebida", precio: 1000 })
       .expect(409);
   });
@@ -772,7 +957,7 @@ describe("POST /api/productos", () => {
   it("rechaza un precio negativo", async () => {
     await request(app)
       .post("/api/productos")
-      .set(as(adminToken))
+      .set(as(admin))
       .send({ nombre: `Precio malo ${suffix}`, categoria: "bebida", precio: -1 })
       .expect(422);
   });
@@ -780,8 +965,27 @@ describe("POST /api/productos", () => {
   it("un cliente no puede crear productos", async () => {
     await request(app)
       .post("/api/productos")
-      .set(as(clienteToken))
+      .set(as(cliente))
       .send({ nombre: `Cliente ${suffix}`, categoria: "bebida", precio: 1000 })
       .expect(403);
+  });
+});
+
+describe("GET /api/productos", () => {
+  it("el personal ve la receta y el cliente no", async () => {
+    // La receta dice cuánto insumo cuesta cada producto: es información de
+    // costos y el menú público no la necesita.
+    const paraCliente = await request(app).get("/api/productos").set(as(cliente)).expect(200);
+
+    for (const producto of paraCliente.body.productos) {
+      expect(producto.receta).toEqual([]);
+    }
+
+    const paraPersonal = await request(app).get("/api/productos").set(as(admin)).expect(200);
+
+    const conReceta = paraPersonal.body.productos.find(
+      (producto: { receta: unknown[] }) => producto.receta.length > 0,
+    );
+    expect(conReceta).toBeDefined();
   });
 });

@@ -1,8 +1,8 @@
-import { Router } from "express";
+import { type Router } from "express";
 import { z } from "zod";
 
 import { ValidationError } from "../../lib/errors.js";
-import { requireAuth, requireRole } from "../../middleware/auth.js";
+import { requireRole } from "../../middleware/auth.js";
 import { asyncHandler } from "../../middleware/async-handler.js";
 import {
   actualizarUsuarioSchema,
@@ -10,13 +10,12 @@ import {
   listarUsuariosQuerySchema,
 } from "./schema.js";
 import { actualizar, crear, listar } from "./service.js";
+import { routerConAuth } from "../../middleware/router.js";
 
 const idParamSchema = z.coerce.number().int().positive();
 
 export function usuariosRouter(): Router {
-  const router = Router();
-
-  router.use(requireAuth);
+  const router = routerConAuth();
 
   // GET /api/usuarios
   router.get(

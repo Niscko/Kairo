@@ -1,29 +1,22 @@
-import { Router } from "express";
+import { type Router } from "express";
 import { z } from "zod";
 
 import { ValidationError } from "../../lib/errors.js";
-import { requireAuth, requireRole } from "../../middleware/auth.js";
+import { requireRole } from "../../middleware/auth.js";
 import { asyncHandler } from "../../middleware/async-handler.js";
+import { routerConAuth } from "../../middleware/router.js";
 import {
   actualizarEspacioSchema,
   crearEspacioSchema,
   listarEspaciosQuerySchema,
 } from "./schema.js";
-import {
-  actualizar,
-  crear,
-  eliminar,
-  listar,
-  obtener,
-} from "./service.js";
+import { actualizar, crear, eliminar, listar, obtener } from "./service.js";
 
 const idParamSchema = z.coerce.number().int().positive();
 
 export function espaciosRouter(): Router {
-  const router = Router();
-
   // Todo el módulo exige sesión: incluso el listado revela la estructura del local.
-  router.use(requireAuth);
+  const router = routerConAuth();
 
   // GET /api/espacios
   router.get(

@@ -15,6 +15,8 @@ export async function listarProductos(query: {
   q?: string;
   categoria?: string;
   soloActivos: boolean;
+  /** El personal ve la receta; un cliente solo necesita nombre y precio. */
+  esPersonal?: boolean;
 }) {
   const productos = await prisma.producto.findMany({
     where: {
@@ -36,12 +38,15 @@ export async function listarProductos(query: {
     descripcion: producto.descripcion,
     esAlcohol: producto.esAlcohol,
     activo: producto.activo,
-    receta: producto.recetaItems.map((item) => ({
-      insumoId: item.insumoId,
-      insumo: item.insumo.nombre,
-      unidad: item.insumo.unidad,
-      cantidad: item.cantidad,
-    })),
+    // La receta es información de costos: el menú público no la necesita.
+    receta: query.esPersonal
+      ? producto.recetaItems.map((item) => ({
+          insumoId: item.insumoId,
+          insumo: item.insumo.nombre,
+          unidad: item.insumo.unidad,
+          cantidad: item.cantidad,
+        }))
+      : [],
   }));
 }
 

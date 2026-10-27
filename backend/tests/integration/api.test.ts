@@ -6,6 +6,7 @@ import request from "supertest";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { createApp } from "../../src/app.js";
+import { iniciarSesion, soloLectura, type Sesion } from "./helpers.js";
 
 /**
  * Pruebas de integración contra una base real: no hay dobles de Prisma, así que
@@ -18,26 +19,28 @@ const app = createApp();
 
 const PASSWORD = "kairo123";
 
-let adminToken = "";
-let clienteToken = "";
+let admin: Sesion;
+let cliente: Sesion;
 const suffix = randomUUID().slice(0, 8);
 
 beforeAll(async () => {
   await prisma.$connect();
-  adminToken = await login("admin@kairo.local");
-  clienteToken = await login("valentina@kairo.local");
+  admin = await iniciarSesion(app, "admin@kairo.local");
+  cliente = await iniciarSesion(app, "valentina@kairo.local");
 });
 
 afterAll(async () => {
   await prisma.$disconnect();
 });
 
-async function login(email: string): Promise<string> {
-  const response = await request(app)
-    .post("/api/auth/login")
-    .send({ email, password: PASSWORD })
-    .expect(200);
-  return response.body.accessToken as string;
+/** Cabeceras de escritura: token de acceso y de CSRF. */
+function as(sesion: Sesion) {
+  return sesion.headers;
+}
+
+/** Cabeceras de lectura: basta el token de acceso. */
+function ro(token: string) {
+  return soloLectura(token);
 }
 
 describe("GET /api/health", () => {
@@ -92,10 +95,7 @@ describe("POST /api/auth/login", () => {
 
 describe("GET /api/auth/me", () => {
   it("devuelve el usuario del token", async () => {
-    const response = await request(app)
-      .get("/api/auth/me")
-      .set("Authorization", `Bearer ${adminToken}`)
-      .expect(200);
+    const response = await request(app).get("/api/auth/me").set(ro(admin.token)).expect(200);
     expect(response.body.user.email).toBe("admin@kairo.local");
   });
 
@@ -119,7 +119,7 @@ describe("GET /api/espacios", () => {
   it("devuelve la página paginada", async () => {
     const response = await request(app)
       .get("/api/espacios?pageSize=5")
-      .set("Authorization", `Bearer ${clienteToken}`)
+      .set(ro(cliente.token))
       .expect(200);
     expect(response.body.datos.length).toBeLessThanOrEqual(5);
     expect(response.body.total).toBeGreaterThan(0);
@@ -129,7 +129,7 @@ describe("GET /api/espacios", () => {
   it("filtra por tipo", async () => {
     const response = await request(app)
       .get("/api/espacios?tipo=sala")
-      .set("Authorization", `Bearer ${clienteToken}`)
+      .set(ro(cliente.token))
       .expect(200);
     for (const espacio of response.body.datos) {
       expect(espacio.tipo).toBe("sala");
@@ -137,17 +137,11 @@ describe("GET /api/espacios", () => {
   });
 
   it("rechaza un tipo inválido", async () => {
-    await request(app)
-      .get("/api/espacios?tipo=inválido")
-      .set("Authorization", `Bearer ${clienteToken}`)
-      .expect(422);
+    await request(app).get("/api/espacios?tipo=inválido").set(ro(cliente.token)).expect(422);
   });
 
   it("devuelve 404 con un id inexistente", async () => {
-    await request(app)
-      .get("/api/espacios/999999")
-      .set("Authorization", `Bearer ${clienteToken}`)
-      .expect(404);
+    await request(app).get("/api/espacios/999999").set(ro(cliente.token)).expect(404);
   });
 });
 
@@ -155,7 +149,7 @@ describe("POST /api/espacios", () => {
   it("impide a un cliente crear espacios", async () => {
     const response = await request(app)
       .post("/api/espacios")
-      .set("Authorization", `Bearer ${clienteToken}`)
+      .set(as(cliente))
       .send({ nombre: "Sala X", tipo: "sala", capacidad: 4, tarifaHora: 10_000, zona: "Planta 3" })
       .expect(403);
     expect(response.body.error.code).toBe("FORBIDDEN");
@@ -164,7 +158,7 @@ describe("POST /api/espacios", () => {
   it("valida el cuerpo con Zod", async () => {
     const response = await request(app)
       .post("/api/espacios")
-      .set("Authorization", `Bearer ${adminToken}`)
+      .set(as(admin))
       .send({ nombre: "X" })
       .expect(422);
     expect(response.body.error.details.length).toBeGreaterThan(0);
@@ -175,28 +169,19 @@ describe("POST /api/espacios", () => {
 
     const creado = await request(app)
       .post("/api/espacios")
-      .set("Authorization", `Bearer ${adminToken}`)
+      .set(as(admin))
       .send({ nombre, tipo: "sala", capacidad: 5, tarifaHora: 12_000, zona: "Planta 9" })
       .expect(201);
     const id = creado.body.id as number;
     expect(creado.body.nombre).toBe(nombre);
     expect(creado.body.estado).toBe("disponible");
 
-    const leido = await request(app)
-      .get(`/api/espacios/${id}`)
-      .set("Authorization", `Bearer ${adminToken}`)
-      .expect(200);
+    const leido = await request(app).get(`/api/espacios/${id}`).set(ro(admin.token)).expect(200);
     expect(leido.body.id).toBe(id);
 
-    await request(app)
-      .delete(`/api/espacios/${id}`)
-      .set("Authorization", `Bearer ${adminToken}`)
-      .expect(204);
+    await request(app).delete(`/api/espacios/${id}`).set(as(admin)).expect(204);
 
-    await request(app)
-      .get(`/api/espacios/${id}`)
-      .set("Authorization", `Bearer ${adminToken}`)
-      .expect(404);
+    await request(app).get(`/api/espacios/${id}`).set(ro(admin.token)).expect(404);
   });
 
   it("rechaza un nombre duplicado", async () => {
@@ -205,43 +190,37 @@ describe("POST /api/espacios", () => {
 
     const creado = await request(app)
       .post("/api/espacios")
-      .set("Authorization", `Bearer ${adminToken}`)
+      .set(as(admin))
       .send(payload)
       .expect(201);
 
     const repetido = await request(app)
       .post("/api/espacios")
-      .set("Authorization", `Bearer ${adminToken}`)
+      .set(as(admin))
       .send(payload)
       .expect(409);
     expect(repetido.body.error.code).toBe("CONFLICT");
 
-    await request(app)
-      .delete(`/api/espacios/${creado.body.id}`)
-      .set("Authorization", `Bearer ${adminToken}`)
-      .expect(204);
+    await request(app).delete(`/api/espacios/${creado.body.id}`).set(as(admin)).expect(204);
   });
 
   it("actualiza parcialmente un espacio", async () => {
     const nombre = `Mesa editable ${suffix}`;
     const creado = await request(app)
       .post("/api/espacios")
-      .set("Authorization", `Bearer ${adminToken}`)
+      .set(as(admin))
       .send({ nombre, tipo: "mesa", capacidad: 2, tarifaHora: 0, zona: "Café" })
       .expect(201);
 
     const actualizado = await request(app)
       .patch(`/api/espacios/${creado.body.id}`)
-      .set("Authorization", `Bearer ${adminToken}`)
+      .set(as(admin))
       .send({ estado: "mantenimiento" })
       .expect(200);
     expect(actualizado.body.estado).toBe("mantenimiento");
     expect(actualizado.body.nombre).toBe(nombre); // no se pierde lo no enviado
 
-    await request(app)
-      .delete(`/api/espacios/${creado.body.id}`)
-      .set("Authorization", `Bearer ${adminToken}`)
-      .expect(204);
+    await request(app).delete(`/api/espacios/${creado.body.id}`).set(as(admin)).expect(204);
   });
 });
 
@@ -277,10 +256,7 @@ describe("rotación de refresh token", () => {
     expect(reutilizado.body.error.message).toMatch(/seguridad/i);
 
     // La familia queda revocada: tampoco vale el token emitido legítimo.
-    await request(app)
-      .post("/api/auth/refresh")
-      .set("Cookie", segundoToken)
-      .expect(401);
+    await request(app).post("/api/auth/refresh").set("Cookie", segundoToken).expect(401);
   });
 
   it("refresh sin cookie responde 401", async () => {
@@ -291,10 +267,7 @@ describe("rotación de refresh token", () => {
 
 describe("protección de datos", () => {
   it("no expone el hash de la contraseña en /me", async () => {
-    const response = await request(app)
-      .get("/api/auth/me")
-      .set("Authorization", `Bearer ${adminToken}`)
-      .expect(200);
+    const response = await request(app).get("/api/auth/me").set(ro(admin.token)).expect(200);
     expect(response.body.user.passwordHash).toBeUndefined();
     expect(response.body.user).not.toHaveProperty("password");
   });

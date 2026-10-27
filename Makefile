@@ -137,7 +137,12 @@ test: ## Vitest en backend y frontend
 
 .PHONY: test-e2e
 test-e2e: ## Pruebas de extremo a extremo (requiere el stack en marcha)
-	cd frontend && RELAJAR_RATE_LIMIT=true pnpm run test:e2e
+	@# La suite e2e hace muchas peticiones desde la misma IP: con el límite
+	@# normal (100 por ventana) el backend bloquearía la suite. Se levanta el
+	@# backend relajando el límite; en producción la variable está en false.
+	RELAJAR_RATE_LIMIT=true $(COMPOSE) up -d backend
+	@$(MAKE) --no-print-directory wait
+	cd frontend && pnpm run test:e2e
 
 .PHONY: format
 format: ## Aplica Prettier

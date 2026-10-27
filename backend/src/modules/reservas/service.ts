@@ -1,6 +1,7 @@
 import { type Prisma, type PropositoReserva } from "@prisma/client";
 
-import { dateISO, montoReserva, overlaps } from "../../lib/domain.js";
+import type { Identidad } from "../../lib/clientes.js";
+import { dateISO, estadoPorHorario, montoReserva, overlaps } from "../../lib/domain.js";
 import { ConflictError, NotFoundError, ValidationError } from "../../lib/errors.js";
 import { validarHorario } from "../../lib/horarios.js";
 import { prisma } from "../../lib/prisma.js";
@@ -52,7 +53,7 @@ async function hayReservaCruzada(
  */
 export async function listar(
   query: ListarReservasQuery,
-  clienteIdDelUsuario: number | null,
+  identidad: Identidad,
 ): Promise<{ dia: string; reservas: ReservaDTO[] }> {
   const dia = query.dia ?? dateISO(new Date());
   const inicioDia = parseDateTimeLocal(`${dia} 00:00`);
@@ -70,7 +71,7 @@ export async function listar(
       fin: { gt: inicioDia },
       ...(query.espacioId ? { espacioId: query.espacioId } : {}),
       ...(query.estado ? { estado: query.estado } : {}),
-      ...(clienteIdDelUsuario !== null ? { clienteId: clienteIdDelUsuario } : {}),
+      ...(identidad.rol === "cliente" ? { clienteId: identidad.clienteId! } : {}),
     },
     include: {
       espacio: { select: { nombre: true, tipo: true } },
@@ -100,7 +101,7 @@ export async function listar(
 
 export async function crear(
   input: CrearReservaInput,
-  clienteIdDelUsuario: number | null,
+  identidad: Identidad,
 ): Promise<{ id: number; monto: number; incluido: boolean }> {
   const inicio = parseDateTimeLocal(input.inicio);
   const fin = parseDateTimeLocal(input.fin);
@@ -110,9 +111,15 @@ export async function crear(
 
   validarHorario(inicio, fin);
 
+  // No se reserva en el pasado: una reserva vencida no se puede usar ni
+  // facturar, así que no tiene sentido crearla.
+  if (fin <= new Date()) {
+    throw new ValidationError("No se pueden crear reservas en el pasado");
+  }
+
   // Un cliente reserva siempre para sí mismo; el personal puede reservar para
   // cualquier cliente del local.
-  const clienteId = clienteIdDelUsuario ?? input.clienteId ?? null;
+  const clienteId = identidad.rol === "cliente" ? identidad.clienteId! : (input.clienteId ?? null);
   if (!clienteId) {
     throw new ValidationError("Selecciona el cliente de la reserva");
   }
@@ -148,7 +155,9 @@ export async function crear(
   });
 
   const ahora = new Date();
-  const estado = inicio <= ahora && fin > ahora ? "en_curso" : "confirmada";
+  // El estado se deriva del horario: una reserva que ya terminó está
+  // `completada` y cuenta como ingreso realizado, no como previsto.
+  const estado = estadoPorHorario(inicio, fin, ahora);
 
   const reserva = await prisma.reserva.create({
     data: {
@@ -173,10 +182,7 @@ export async function crear(
 }
 
 /** Cancela una reserva. Solo el personal o el propio cliente pueden hacerlo. */
-export async function cancelar(
-  id: number,
-  clienteIdDelUsuario: number | null,
-): Promise<void> {
+export async function cancelar(id: number, identidad: Identidad): Promise<void> {
   const reserva = await prisma.reserva.findUnique({
     where: { id },
     select: { id: true, clienteId: true, estado: true },
@@ -185,7 +191,9 @@ export async function cancelar(
     throw new NotFoundError("Reserva");
   }
 
-  if (clienteIdDelUsuario !== null && reserva.clienteId !== clienteIdDelUsuario) {
+  // Un cliente solo puede cancelar sus propias reservas. La comparación es
+  // explícita por rol: un `null` no debe significar "sin restricciones".
+  if (identidad.rol === "cliente" && reserva.clienteId !== identidad.clienteId) {
     throw new NotFoundError("Reserva");
   }
   if (reserva.estado === "completada" || reserva.estado === "cancelada") {
@@ -203,6 +211,39 @@ export async function cancelar(
   }
 
   await prisma.reserva.update({ where: { id }, data: { estado: "cancelada" } });
+}
+
+/**
+ * Estado efectivo de una reserva, derivado de su horario.
+ *
+ * La columna `estado` en la base se actualiza por barridos, pero leer el
+ * horario es siempre más fiable: si el barrido se retrasa, el reporte no
+ * clasifica como "prevista" una reserva que ya se usó. Una reserva cancelada
+ * conserva su estado, porque esa decisión es explícita.
+ */
+export function estadoEfectivo(
+  reserva: { estado: string; inicio: Date; fin: Date },
+  ahora: Date = new Date(),
+): string {
+  if (reserva.estado === "cancelada") return "cancelada";
+  return estadoPorHorario(reserva.inicio, reserva.fin, ahora);
+}
+
+/**
+ * Marca como completadas las reservas cuya hora de fin ya pasó.
+ *
+ * Es idempotente y segura de ejecutar en cada lectura: solo toca las
+ * reservas `confirmada` o `en_curso` que ya terminaron.
+ */
+export async function completarReservasVencidas(): Promise<number> {
+  const resultado = await prisma.reserva.updateMany({
+    where: {
+      estado: { in: ["confirmada", "en_curso"] },
+      fin: { lte: new Date() },
+    },
+    data: { estado: "completada" },
+  });
+  return resultado.count;
 }
 
 /** Detecta solapamientos en un conjunto de reservas; lo usan los reportes. */

@@ -4,11 +4,7 @@ import { type Prisma } from "@prisma/client";
 import { config } from "../../config/env.js";
 import { ConflictError, NotFoundError } from "../../lib/errors.js";
 import { prisma } from "../../lib/prisma.js";
-import type {
-  ActualizarUsuarioInput,
-  CrearUsuarioInput,
-  ListarUsuariosQuery,
-} from "./schema.js";
+import type { ActualizarUsuarioInput, CrearUsuarioInput, ListarUsuariosQuery } from "./schema.js";
 
 export interface UsuarioDTO {
   id: number;
@@ -52,7 +48,9 @@ export async function listar(query: ListarUsuariosQuery): Promise<UsuarioDTO[]> 
     activo: usuario.activo,
     creadoEn: usuario.creadoEn.toISOString(),
     empleado: usuario.empleado ? { id: usuario.empleado.id, cargo: usuario.empleado.cargo } : null,
-    cliente: usuario.cliente ? { id: usuario.cliente.id, membresia: usuario.cliente.membresia } : null,
+    cliente: usuario.cliente
+      ? { id: usuario.cliente.id, membresia: usuario.cliente.membresia }
+      : null,
   }));
 }
 
@@ -105,7 +103,10 @@ export async function crear(input: CrearUsuarioInput): Promise<{ id: number }> {
 }
 
 export async function actualizar(id: number, input: ActualizarUsuarioInput): Promise<UsuarioDTO> {
-  const usuario = await prisma.usuario.findUnique({ where: { id }, select: { id: true } });
+  const usuario = await prisma.usuario.findUnique({
+    where: { id },
+    select: { id: true, rol: true },
+  });
   if (!usuario) {
     throw new NotFoundError("Usuario");
   }
@@ -118,15 +119,44 @@ export async function actualizar(id: number, input: ActualizarUsuarioInput): Pro
     }
   }
 
-  await prisma.usuario.update({
-    where: { id },
-    data: {
-      ...(input.nombre !== undefined ? { nombre: input.nombre } : {}),
-      ...(input.email !== undefined ? { email: input.email.toLowerCase() } : {}),
-      ...(input.telefono !== undefined ? { telefono: input.telefono } : {}),
-      ...(input.rol !== undefined ? { rol: input.rol } : {}),
-      ...(input.activo !== undefined ? { activo: input.activo } : {}),
-    },
+  // El cambio de rol va en una transacción junto con la creación del perfil
+  // correspondiente. Si se actualiza el rol y el perfil se crea aparte, queda
+  // un instante (y a veces un estado permanente) en el que la cuenta dice
+  // `cliente` sin tener perfil de cliente: el personal la trataría como
+  // cliente y el cliente, como personal.
+  await prisma.$transaction(async (tx) => {
+    if (input.rol !== undefined && input.rol !== usuario.rol) {
+      if (input.rol === "cliente") {
+        await tx.cliente.upsert({
+          where: { usuarioId: id },
+          create: { usuarioId: id, documento: null, membresia: "ninguna" },
+          update: {},
+        });
+      } else {
+        await tx.cliente.deleteMany({ where: { usuarioId: id } });
+      }
+
+      if (input.rol === "empleado") {
+        await tx.empleado.upsert({
+          where: { usuarioId: id },
+          create: { usuarioId: id, cargo: "Sin cargo", salario: 0, fechaIngreso: new Date() },
+          update: {},
+        });
+      } else {
+        await tx.empleado.deleteMany({ where: { usuarioId: id } });
+      }
+    }
+
+    await tx.usuario.update({
+      where: { id },
+      data: {
+        ...(input.nombre !== undefined ? { nombre: input.nombre } : {}),
+        ...(input.email !== undefined ? { email: input.email.toLowerCase() } : {}),
+        ...(input.telefono !== undefined ? { telefono: input.telefono } : {}),
+        ...(input.rol !== undefined ? { rol: input.rol } : {}),
+        ...(input.activo !== undefined ? { activo: input.activo } : {}),
+      },
+    });
   });
 
   const actualizado = await prisma.usuario.findUnique({

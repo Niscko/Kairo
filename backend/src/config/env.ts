@@ -18,10 +18,7 @@ loadDotenv({ path: path.join(BACKEND_ROOT, ".env") });
  * desarrollo no llegue por accidente a producción.
  */
 const secret = (label: string) =>
-  z
-    .string()
-    .min(32, `${label} debe tener al menos 32 caracteres`)
-    .describe(label);
+  z.string().min(32, `${label} debe tener al menos 32 caracteres`).describe(label);
 
 /**
  * Duración tipo "15m", "7d", "900s". Se valida el formato porque un valor mal
@@ -44,7 +41,11 @@ const schema = z
     JWT_REFRESH_TTL: duration.default("7d"),
     BCRYPT_COST: z.coerce.number().int().min(10).max(15).default(12),
     CSRF_SECRET: secret("CSRF_SECRET"),
-    RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(15 * 60 * 1000),
+    RATE_LIMIT_WINDOW_MS: z.coerce
+      .number()
+      .int()
+      .positive()
+      .default(15 * 60 * 1000),
     RATE_LIMIT_MAX: z.coerce.number().int().positive().default(100),
     AUTH_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(10),
     /**
@@ -55,7 +56,8 @@ const schema = z
       .enum(["true", "false"])
       .default("false")
       .transform((valor) => valor === "true"),
-  })  .superRefine((value, ctx) => {
+  })
+  .superRefine((value, ctx) => {
     if (value.JWT_ACCESS_SECRET === value.JWT_REFRESH_SECRET) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -79,6 +81,8 @@ export type Config = z.infer<typeof schema> & {
   prettyLogs: boolean;
   /** Límite de intentos de autenticación por IP. */
   authRateLimitMax: number;
+  /** Límite general de peticiones por IP. */
+  apiRateLimitMax: number;
   corsOrigins: string[];
 };
 
@@ -104,11 +108,11 @@ function load(): Config {
     isTest,
     // En tests nunca se abre un worker de pino: ralentiza y ensucia la salida.
     prettyLogs: !isProduction && !isTest,
-    // El límite de autenticación se mide por IP. En las pruebas de extremo a
-    // extremo todas las peticiones salen de la misma, así que un límite bajo
-    // bloquearía la suite; se relaja cuando se pide explícitamente.
-    authRateLimitMax:
-      isTest || env.RELAJAR_RATE_LIMIT ? 10_000 : env.AUTH_RATE_LIMIT_MAX,
+    // Los límites se miden por IP. En las pruebas de extremo a extremo todas
+    // las peticiones salen de la misma, así que un límite bajo bloquearía la
+    // suite; se relajan cuando se pide explícitamente.
+    authRateLimitMax: isTest || env.RELAJAR_RATE_LIMIT ? 10_000 : env.AUTH_RATE_LIMIT_MAX,
+    apiRateLimitMax: isTest || env.RELAJAR_RATE_LIMIT ? 10_000 : env.RATE_LIMIT_MAX,
     corsOrigins: env.CORS_ORIGINS.split(",")
       .map((origin) => origin.trim())
       .filter((origin) => origin.length > 0),

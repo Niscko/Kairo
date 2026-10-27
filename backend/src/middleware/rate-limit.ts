@@ -21,7 +21,7 @@ const shared: Partial<Options> = {
 export const apiRateLimiter = rateLimit({
   ...shared,
   windowMs: config.RATE_LIMIT_WINDOW_MS,
-  max: config.RATE_LIMIT_MAX,
+  max: config.apiRateLimitMax,
 });
 
 /**

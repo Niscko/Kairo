@@ -1,17 +1,14 @@
-import { Router } from "express";
+import { type Router } from "express";
 
-import { clienteIdDeUsuario } from "../../lib/clientes.js";
-import { ValidationError } from "../../lib/errors.js";
+import { identidadDeUsuario } from "../../lib/clientes.js";
 import { prisma } from "../../lib/prisma.js";
-import { requireAuth } from "../../middleware/auth.js";
 import { asyncHandler } from "../../middleware/async-handler.js";
 import { crearPedidoSchema } from "./schema.js";
 import { crearPedido, disponibilidad } from "./service.js";
+import { routerConAuth } from "../../middleware/router.js";
 
 export function pedidosRouter(): Router {
-  const router = Router();
-
-  router.use(requireAuth);
+  const router = routerConAuth();
 
   // GET /api/pedidos/disponibilidad — cuántas unidades quedan de cada producto.
   router.get(
@@ -38,27 +35,16 @@ export function pedidosRouter(): Router {
     "/",
     asyncHandler(async (req, res) => {
       const input = crearPedidoSchema.parse(req.body);
-      const esCliente = req.auth?.rol === "cliente";
-      const clienteId = esCliente ? await clienteIdDeUsuario(req.auth!.userId) : null;
+      const identidad = await identidadDeUsuario(req.auth!.userId, req.auth!.rol);
+      const esCliente = identidad.rol === "cliente";
 
-      if (esCliente && clienteId === null) {
-        throw new ValidationError("La cuenta no tiene un perfil de cliente");
-      }
+      const empleadoId = esCliente ? null : identidad.empleadoId;
 
-      const empleadoId = esCliente ? null : await empleadoIdDeUsuario(req.auth!.userId);
-
-      res.status(201).json(await crearPedido(input, { clienteId, empleadoId }));
+      res
+        .status(201)
+        .json(await crearPedido(input, { clienteId: identidad.clienteId, empleadoId }));
     }),
   );
 
   return router;
-}
-
-/** Id de empleado del usuario, o null si no es personal del local. */
-async function empleadoIdDeUsuario(usuarioId: number): Promise<number | null> {
-  const empleado = await prisma.empleado.findUnique({
-    where: { usuarioId },
-    select: { id: true },
-  });
-  return empleado?.id ?? null;
 }

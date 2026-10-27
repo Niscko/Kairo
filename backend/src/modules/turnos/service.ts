@@ -1,6 +1,7 @@
 import { ConflictError, NotFoundError, ValidationError } from "../../lib/errors.js";
-import { diaUTC, fechaISO } from "../../lib/fechas.js";
-import { esHoraValida, horaEsAnterior } from "../../lib/horarios.js";
+import { diaLocal, diaUTC, fechaISO } from "../../lib/fechas.js";
+import { dayStamp } from "../../lib/domain.js";
+import { esHoraValida, horaEsAnterior, validarHorario } from "../../lib/horarios.js";
 import { prisma } from "../../lib/prisma.js";
 import type { CrearTurnoInput, ListarTurnosQuery } from "./schema.js";
 
@@ -26,7 +27,9 @@ export interface EmpleadoDTO {
   salario?: number;
 }
 
-export async function listarTurnos(query: ListarTurnosQuery): Promise<{ fecha: string; turnos: TurnoDTO[] }> {
+export async function listarTurnos(
+  query: ListarTurnosQuery,
+): Promise<{ fecha: string; turnos: TurnoDTO[] }> {
   const fecha = query.fecha ?? fechaISO(new Date());
   const turnos = await prisma.turno.findMany({
     where: {
@@ -61,6 +64,14 @@ export async function crearTurno(input: CrearTurnoInput): Promise<{ id: number }
   if (!horaEsAnterior(input.horaInicio, input.horaFin)) {
     throw new ValidationError("La hora de fin debe ser posterior a la de inicio");
   }
+
+  // Los turnos siguen las mismas reglas de bloque y horario que las reservas
+  // (README, "Reglas de negocio"): media hora, de 07:00 a 23:00, entre 1 y 14
+  // horas. `validarHorario` valida el horario local, así que el turno se
+  // construye con la fecha del negocio.
+  const inicio = dayStamp(diaLocal(input.fecha), input.horaInicio);
+  const fin = dayStamp(diaLocal(input.fecha), input.horaFin);
+  validarHorario(inicio, fin);
 
   const empleado = await prisma.empleado.findFirst({
     where: { id: input.empleadoId, activo: true, usuario: { activo: true } },

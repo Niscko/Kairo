@@ -1,14 +1,13 @@
-import { Router } from "express";
+import { type Router } from "express";
 
-import { requireAuth, requireRole } from "../../middleware/auth.js";
+import { requireRole } from "../../middleware/auth.js";
 import { asyncHandler } from "../../middleware/async-handler.js";
 import { reporteQuerySchema } from "./schema.js";
 import { construir } from "./service.js";
+import { routerConAuth } from "../../middleware/router.js";
 
 export function reportesRouter(): Router {
-  const router = Router();
-
-  router.use(requireAuth);
+  const router = routerConAuth();
 
   // GET /api/reportes — el reporte muestra costos y márgenes: solo la dirección.
   router.get(

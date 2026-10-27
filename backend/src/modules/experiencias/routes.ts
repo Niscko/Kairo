@@ -1,9 +1,9 @@
-import { Router } from "express";
+import { type Router } from "express";
 import { z } from "zod";
 
-import { clienteIdDeUsuario } from "../../lib/clientes.js";
+import { identidadDeUsuario } from "../../lib/clientes.js";
 import { ValidationError } from "../../lib/errors.js";
-import { requireAuth, requireRole } from "../../middleware/auth.js";
+import { requireRole } from "../../middleware/auth.js";
 import { asyncHandler } from "../../middleware/async-handler.js";
 import {
   agregarParticipanteSchema,
@@ -11,13 +11,12 @@ import {
   listarExperienciasQuerySchema,
 } from "./schema.js";
 import { agregarParticipante, cancelar, cerrar, crear, listar } from "./service.js";
+import { routerConAuth } from "../../middleware/router.js";
 
 const idParamSchema = z.coerce.number().int().positive();
 
 export function experienciasRouter(): Router {
-  const router = Router();
-
-  router.use(requireAuth);
+  const router = routerConAuth();
 
   // GET /api/experiencias
   router.get(
@@ -46,8 +45,8 @@ export function experienciasRouter(): Router {
       const body = agregarParticipanteSchema.parse(req.body);
 
       // Un cliente se inscribe a sí mismo; el personal puede Inscribir a otro.
-      const clienteId =
-        req.auth?.rol === "cliente" ? await clienteIdDeUsuario(req.auth!.userId) : body.clienteId;
+      const identidad = await identidadDeUsuario(req.auth!.userId, req.auth!.rol);
+      const clienteId = identidad.rol === "cliente" ? identidad.clienteId : body.clienteId;
       if (!clienteId) {
         throw new ValidationError("Selecciona al participante");
       }

@@ -1,9 +1,10 @@
-import { Router } from "express";
+import { type Router } from "express";
 import { z } from "zod";
 
 import { ValidationError } from "../../lib/errors.js";
-import { requireAuth, requireRole } from "../../middleware/auth.js";
+import { requireRole } from "../../middleware/auth.js";
 import { asyncHandler } from "../../middleware/async-handler.js";
+import { routerConAuth } from "../../middleware/router.js";
 import {
   actualizarCostoSchema,
   actualizarEquipoSchema,
@@ -28,9 +29,7 @@ import {
 const idParamSchema = z.coerce.number().int().positive();
 
 export function equiposRouter(): Router {
-  const router = Router();
-
-  router.use(requireAuth);
+  const router = routerConAuth();
 
   router.get(
     "/",
@@ -64,9 +63,7 @@ export function equiposRouter(): Router {
 }
 
 export function costosRouter(): Router {
-  const router = Router();
-
-  router.use(requireAuth);
+  const router = routerConAuth();
 
   // Los costos y permisos son información financiera: solo la dirección.
   router.get(
@@ -101,9 +98,7 @@ export function costosRouter(): Router {
 }
 
 export function permisosRouter(): Router {
-  const router = Router();
-
-  router.use(requireAuth);
+  const router = routerConAuth();
 
   router.get(
     "/",

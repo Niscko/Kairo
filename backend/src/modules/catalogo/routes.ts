@@ -1,9 +1,10 @@
-import { Router } from "express";
+import { type Router } from "express";
 import { z } from "zod";
 
 import { ValidationError } from "../../lib/errors.js";
-import { requireAuth, requireRole } from "../../middleware/auth.js";
+import { requireRole } from "../../middleware/auth.js";
 import { asyncHandler } from "../../middleware/async-handler.js";
+import { routerConAuth } from "../../middleware/router.js";
 import {
   actualizarProductoSchema,
   crearInsumoSchema,
@@ -30,16 +31,16 @@ import {
 const idParamSchema = z.coerce.number().int().positive();
 
 export function productosRouter(): Router {
-  const router = Router();
-
-  router.use(requireAuth);
+  const router = routerConAuth();
 
   // GET /api/productos — el menú lo consulta cualquier persona autenticada.
+  // La receta (costos e insumos) solo se muestra al personal.
   router.get(
     "/",
     asyncHandler(async (req, res) => {
       const query = listarProductosQuerySchema.parse(req.query);
-      res.status(200).json({ productos: await listarProductos(query) });
+      const esPersonal = req.auth?.rol === "admin" || req.auth?.rol === "empleado";
+      res.status(200).json({ productos: await listarProductos({ ...query, esPersonal }) });
     }),
   );
   // POST /api/productos
@@ -67,9 +68,7 @@ export function productosRouter(): Router {
 }
 
 export function insumosRouter(): Router {
-  const router = Router();
-
-  router.use(requireAuth);
+  const router = routerConAuth();
 
   // GET /api/insumos — solo el personal ve costos de inventario.
   router.get(
@@ -95,9 +94,7 @@ export function insumosRouter(): Router {
 }
 
 export function movimientosRouter(): Router {
-  const router = Router();
-
-  router.use(requireAuth);
+  const router = routerConAuth();
 
   // GET /api/movimientos
   router.get(
@@ -123,9 +120,7 @@ export function movimientosRouter(): Router {
 }
 
 export function proveedoresRouter(): Router {
-  const router = Router();
-
-  router.use(requireAuth);
+  const router = routerConAuth();
 
   // GET /api/proveedores
   router.get(

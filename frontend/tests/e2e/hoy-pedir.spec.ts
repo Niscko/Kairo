@@ -16,9 +16,7 @@ test.describe("Hoy y Pedir", () => {
     await expect(page.getByRole("heading", { name: "Hoy" })).toBeVisible();
 
     // El encabezado de la sección de reservas.
-    await expect(
-      page.getByRole("heading", { name: "Reservas", exact: true }),
-    ).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Reservas", exact: true })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Espacios", exact: true })).toBeVisible();
     // Los turnos del personal vienen del backend.
     await expect(page.getByText("Turnos del personal")).toBeVisible();
@@ -36,7 +34,8 @@ test.describe("Hoy y Pedir", () => {
 
     // Los productos del menú están en pantalla.
     await expect(page.getByText("Americano")).toBeVisible();
-    await expect(page.getByText("Latte")).toBeVisible();
+    // Exacto: "Latte" también aparece dentro de "Latte de avena".
+    await expect(page.getByText("Latte", { exact: true })).toBeVisible();
 
     // Agrega un producto y comprueba que el carrito lo cuenta.
     await page.getByRole("button", { name: "Agregar" }).first().click();
@@ -86,7 +85,11 @@ test.describe("Exportaciones", () => {
       const respuesta = await fetch("/api/exportaciones/ventas.csv?rango=21d", {
         headers: { Authorization: `Bearer ${token}` },
       });
-      return { status: respuesta.status, tipo: respuesta.headers.get("content-type"), cuerpo: await respuesta.text() };
+      return {
+        status: respuesta.status,
+        tipo: respuesta.headers.get("content-type"),
+        cuerpo: await respuesta.text(),
+      };
     });
 
     expect(respuesta.status).toBe(200);

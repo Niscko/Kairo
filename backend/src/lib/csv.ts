@@ -27,8 +27,9 @@ export function aCsv(encabezados: string[], filas: Array<Array<unknown>>): strin
   for (const fila of filas) {
     lineas.push(fila.map(escaparCsv).join(";"));
   }
-  // El BOM hace que Excel reconozca UTF-8 y no rompa los acentos.
-  return `﻿${lineas.join("\r\n")}\r\n`;
+  // El BOM hace que Excel reconozca UTF-8 y no rompa los acentos. Se escribe
+  // como escape: el carácter literal es un espacio irregular y ESLint lo rechaza.
+  return `\uFEFF${lineas.join("\r\n")}\r\n`;
 }
 
 /** Nombre de archivo con marca de tiempo, para la descarga. */

@@ -1,3 +1,4 @@
+import type { Identidad } from "../../lib/clientes.js";
 import { addDays, dateISO, dayStamp } from "../../lib/domain.js";
 import { diaUTC } from "../../lib/fechas.js";
 import { prisma } from "../../lib/prisma.js";
@@ -27,20 +28,48 @@ export interface DashboardDTO {
     estado: string;
   }>;
   stock: Array<{ id: number; nombre: string; unidad: string; stock: number; stockMinimo: number }>;
-  permisos: Array<{ id: number; nombre: string; entidad: string; vencimiento: string; estado: string }>;
-  turnos: Array<{ id: number; nombre: string; cargo: string; horaInicio: string; horaFin: string; area: string }>;
-  experiencias: Array<{ id: number; nombre: string; inicio: string; fin: string; estado: string; participantes: number }>;
+  permisos: Array<{
+    id: number;
+    nombre: string;
+    entidad: string;
+    vencimiento: string;
+    estado: string;
+  }>;
+  turnos: Array<{
+    id: number;
+    nombre: string;
+    cargo: string;
+    horaInicio: string;
+    horaFin: string;
+    area: string;
+  }>;
+  experiencias: Array<{
+    id: number;
+    nombre: string;
+    inicio: string;
+    fin: string;
+    estado: string;
+    participantes: number;
+  }>;
   serie: Array<{ dia: string; total: number }>;
   consumoMes?: number;
-  costosPendientes?: Array<{ id: number; concepto: string; monto: number; vencimiento: string | null }>;
+  costosPendientes?: Array<{
+    id: number;
+    concepto: string;
+    monto: number;
+    vencimiento: string | null;
+  }>;
   costosPendientesTotal?: number;
 }
 
 /**
  * Presencia de cada espacio: ocupado si hay una reserva en curso ahora mismo.
  * La comparación se hace en SQL para no traer todas las reservas del día.
+ *
+ * Un cliente solo conoce la presencia de los espacios que él tiene reservados:
+ * saber quién más está en el local no es información suya.
  */
-async function presenciaEspacios(ahora: Date) {
+async function presenciaEspacios(ahora: Date, clienteId: number | null) {
   const espacios = await prisma.espacio.findMany({
     where: { estado: { not: "mantenimiento" } },
     orderBy: [{ zona: "asc" }, { nombre: "asc" }],
@@ -51,6 +80,7 @@ async function presenciaEspacios(ahora: Date) {
       estado: { in: ["confirmada", "en_curso"] },
       inicio: { lte: ahora },
       fin: { gt: ahora },
+      ...(clienteId !== null ? { clienteId } : {}),
     },
     select: { espacioId: true, fin: true },
   });
@@ -73,49 +103,61 @@ async function presenciaEspacios(ahora: Date) {
 
 export async function construir(
   query: DashboardQuery,
-  contexto: { rol: string; clienteId: number | null },
+  contexto: { identidad: Identidad },
 ): Promise<DashboardDTO> {
   const ahora = new Date();
+  const { identidad } = contexto;
+  const esCliente = identidad.rol === "cliente";
+  const clienteId = esCliente ? identidad.clienteId : null;
 
+  // El inventario, los permisos y los turnos son información del negocio: solo
+  // la ve el personal. Un cliente recibe la lista vacía en esos apartados.
   const [espacios, ventasHoy, stock, permisos, turnos] = await Promise.all([
-    presenciaEspacios(ahora),
+    presenciaEspacios(ahora, clienteId),
     prisma.venta.aggregate({
       where: { fecha: { gte: dayStamp(ahora, "00:00"), lt: dayStamp(addDays(ahora, 1), "00:00") } },
       _sum: { total: true },
       _count: { _all: true },
     }),
-    prisma.insumo.findMany({
-      where: { stock: { lte: prisma.insumo.fields.stockMinimo } },
-      select: { id: true, nombre: true, unidad: true, stock: true, stockMinimo: true },
-      orderBy: { nombre: "asc" },
-    }),
-    prisma.permiso.findMany({
-      where: {
-        OR: [
-          { estado: "vencido" },
-          { vencimiento: { lte: addDays(ahora, 45) } },
-        ],
-      },
-      orderBy: { vencimiento: "asc" },
-    }),
-    prisma.turno.findMany({
-      // Los turnos se guardan en UTC a medianoche: el filtro usa la misma
-      // referencia para no caer en el día anterior.
-      where: { fecha: diaUTC(dateISO(ahora)) },
-      include: { empleado: { include: { usuario: { select: { nombre: true } } } } },
-      orderBy: [{ horaInicio: "asc" }, { empleado: { usuario: { nombre: "asc" } } }],
-    }),
+    esCliente
+      ? Promise.resolve([])
+      : prisma.insumo.findMany({
+          where: { stock: { lte: prisma.insumo.fields.stockMinimo } },
+          select: { id: true, nombre: true, unidad: true, stock: true, stockMinimo: true },
+          orderBy: { nombre: "asc" },
+        }),
+    esCliente
+      ? Promise.resolve([])
+      : prisma.permiso.findMany({
+          where: {
+            OR: [{ estado: "vencido" }, { vencimiento: { lte: addDays(ahora, 45) } }],
+          },
+          orderBy: { vencimiento: "asc" },
+        }),
+    esCliente
+      ? Promise.resolve([])
+      : prisma.turno.findMany({
+          // Los turnos se guardan en UTC a medianoche: el filtro usa la misma
+          // referencia para no caer en el día anterior.
+          where: { fecha: diaUTC(dateISO(ahora)) },
+          include: { empleado: { include: { usuario: { select: { nombre: true } } } } },
+          orderBy: [{ horaInicio: "asc" }, { empleado: { usuario: { nombre: "asc" } } }],
+        }),
   ]);
 
   const payload: DashboardDTO = {
-    rol: contexto.rol,
+    rol: identidad.rol,
     ahora: formatDateTimeLocal(ahora),
     espacios,
     ocupados: espacios.filter((e) => e.presencia === "ocupado").length,
-    ventasHoy: {
-      total: ventasHoy._sum.total ?? 0,
-      operaciones: ventasHoy._count._all,
-    },
+    // La caja del día es información del negocio: un cliente ve su propio
+    // consumo, no la facturación del local.
+    ventasHoy: esCliente
+      ? { total: 0, operaciones: 0 }
+      : {
+          total: ventasHoy._sum.total ?? 0,
+          operaciones: ventasHoy._count._all,
+        },
     reservas: [],
     stock: stock.map((insumo) => ({
       id: insumo.id,
@@ -163,7 +205,7 @@ export async function construir(
     where: {
       estado: { not: "cancelada" },
       fin: { gte: ahora },
-      ...(contexto.clienteId !== null ? { clienteId: contexto.clienteId } : {}),
+      ...(esCliente ? { clienteId: identidad.clienteId! } : {}),
     },
     include: {
       espacio: { select: { nombre: true } },
@@ -181,10 +223,10 @@ export async function construir(
     estado: reserva.estado,
   }));
 
-  if (contexto.rol === "cliente") {
+  if (esCliente) {
     const consumo = await prisma.venta.aggregate({
       where: {
-        clienteId: contexto.clienteId ?? -1,
+        clienteId: identidad.clienteId!,
         fecha: {
           gte: dayStamp(new Date(ahora.getFullYear(), ahora.getMonth(), 1), "00:00"),
           lt: dayStamp(new Date(ahora.getFullYear(), ahora.getMonth() + 1, 1), "00:00"),
@@ -214,7 +256,7 @@ export async function construir(
     payload.serie.push({ dia, total: porDia.get(dia) ?? 0 });
   }
 
-  if (contexto.rol === "admin") {
+  if (identidad.rol === "admin") {
     const periodo = `${ahora.getFullYear()}-${String(ahora.getMonth() + 1).padStart(2, "0")}`;
     const costos = await prisma.costo.findMany({
       where: { periodo, estado: "pendiente" },
