@@ -3,6 +3,9 @@
 Sistema de información para un establecimiento híbrido de coworking, cafetería y experiencias
 sociales.
 
+> **¿Vas a usar la aplicación, no a instalarla?** Lee el
+> [Manual de usuario](docs/MANUAL_DE_USUARIO.md): roles, pantallas y tareas paso a paso.
+
 ## Arquitectura
 
 Monorepo con tres procesos separados, cada uno en su propio contenedor:
