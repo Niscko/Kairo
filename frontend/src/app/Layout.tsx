@@ -44,7 +44,7 @@ export function Layout() {
 
       <aside
         className={cn(
-          "fixed inset-y-0 left-0 z-40 flex flex-col border-r border-border bg-sidebar transition-all duration-200 lg:static",
+          "fixed inset-y-0 left-0 z-40 flex flex-col border-r border-border bg-sidebar transition-all duration-200 lg:sticky lg:top-0 lg:h-screen lg:shrink-0",
           colapsada ? "w-[68px]" : "w-64",
           abiertaMovil ? "translate-x-0" : "-translate-x-full lg:translate-x-0",
         )}
