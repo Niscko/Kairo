@@ -1,0 +1,97 @@
+/*
+ * Tokens de diseño de Kairo.
+ *
+ * Se declaran en HSL (sin la función) porque Tailwind los envuelve con
+ * hsl(var(--token)). El origen de la paleta es OKLCH: perceptualmente uniforme,
+ * así que los pasos de luminosidad se perciben igual en todos los tonos, algo
+ * que HSL no garantiza entre un crema cálido y un azul.
+ *
+ * Contraste: texto principal (--foreground) sobre fondo (--background) supera
+ * 7:1 en ambos temas, por encima del mínimo AA (4.5:1) y casi AAA.
+ */
+
+@layer base {
+  :root {
+    /* Superficies: crema cálido, como una carta de café. */
+    --background: 40 33% 97%;
+    --foreground: 25 18% 12%;
+
+    --card: 40 40% 99%;
+    --card-foreground: 25 18% 12%;
+
+    --popover: 40 40% 99%;
+    --popover-foreground: 25 18% 12%;
+
+    /* Acento: terracota. Sobre blanco da ~4.7:1 con texto blanco. */
+    --primary: 16 62% 45%;
+    --primary-foreground: 40 40% 98%;
+
+    --secondary: 38 28% 91%;
+    --secondary-foreground: 25 22% 20%;
+
+    --muted: 38 22% 92%;
+    --muted-foreground: 25 12% 42%;
+
+    --accent: 34 45% 90%;
+    --accent-foreground: 25 30% 18%;
+
+    --destructive: 0 63% 42%;
+    --destructive-foreground: 40 40% 98%;
+
+    --success: 152 45% 32%;
+    --success-foreground: 40 40% 98%;
+
+    --warning: 32 80% 44%;
+    --warning-foreground: 40 40% 98%;
+
+    --border: 32 18% 86%;
+    --input: 32 18% 84%;
+    --ring: 16 62% 45%;
+
+    --sidebar-background: 36 30% 94%;
+    --sidebar-foreground: 25 20% 18%;
+
+    --radius: 0.625rem;
+  }
+
+  .dark {
+    /* Tema oscuro: mismo tono terracota, luminosity invertida. */
+    --background: 25 14% 8%;
+    --foreground: 38 22% 94%;
+
+    --card: 25 14% 11%;
+    --card-foreground: 38 22% 94%;
+
+    --popover: 25 14% 11%;
+    --popover-foreground: 38 22% 94%;
+
+    /* Más claro que en claro para mantener el contraste sobre fondo oscuro. */
+    --primary: 18 72% 58%;
+    --primary-foreground: 25 30% 10%;
+
+    --secondary: 25 12% 18%;
+    --secondary-foreground: 38 20% 92%;
+
+    --muted: 25 12% 17%;
+    --muted-foreground: 35 14% 65%;
+
+    --accent: 25 18% 22%;
+    --accent-foreground: 34 50% 90%;
+
+    --destructive: 0 62% 52%;
+    --destructive-foreground: 40 40% 98%;
+
+    --success: 152 50% 48%;
+    --success-foreground: 152 40% 10%;
+
+    --warning: 38 85% 58%;
+    --warning-foreground: 32 40% 10%;
+
+    --border: 25 12% 22%;
+    --input: 25 12% 24%;
+    --ring: 18 72% 58%;
+
+    --sidebar-background: 25 14% 10%;
+    --sidebar-foreground: 38 20% 90%;
+  }
+}
