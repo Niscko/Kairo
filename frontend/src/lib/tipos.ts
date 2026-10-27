@@ -22,7 +22,7 @@ export interface Usuario {
 export type TipoMembresia = "ninguna" | "dia" | "mensual";
 export type TipoEspacio = "puesto" | "sala" | "mesa" | "evento";
 export type EstadoEspacio = "disponible" | "mantenimiento";
-export type PropositoReserva = "trabajo" | "estudio" | "reunion" | "consumo";
+export type PropositoReserva = "trabajo" | "estudio" | "reunion" | "consumo" | "evento";
 export type EstadoReserva = "confirmada" | "en_curso" | "completada" | "cancelada";
 export type EstadoEquipo = "operativo" | "mantenimiento" | "prestado";
 export type TipoEquipo = "tecnologico" | "mobiliario" | "produccion" | "administracion";

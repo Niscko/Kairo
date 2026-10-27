@@ -692,3 +692,96 @@ describe("POST /api/usuarios", () => {
       .expect(403);
   });
 });
+
+describe("GET /api/empleados", () => {
+  it("lista al personal con su salario para la dirección", async () => {
+    const response = await request(app).get("/api/empleados").set(as(adminToken)).expect(200);
+
+    expect(Array.isArray(response.body.empleados)).toBe(true);
+    expect(response.body.empleados.length).toBeGreaterThanOrEqual(5);
+    const admin = response.body.empleados.find(
+      (empleado: { email: string }) => empleado.email === "admin@kairo.local",
+    );
+    expect(admin).toMatchObject({ cargo: "administrador" });
+    expect(admin.salario).toBeGreaterThan(0);
+  });
+
+  it("oculta el salario a un empleado", async () => {
+    const response = await request(app).get("/api/empleados").set(as(baristaToken)).expect(200);
+
+    expect(response.body.empleados.length).toBeGreaterThan(0);
+    for (const empleado of response.body.empleados) {
+      expect(empleado).not.toHaveProperty("salario");
+    }
+  });
+
+  it("no está disponible para un cliente", async () => {
+    await request(app).get("/api/empleados").set(as(clienteToken)).expect(403);
+  });
+
+  it("un empleado creado con salario aparece en la lista", async () => {
+    const email = `salario.${suffix}@kairo.local`;
+    await request(app)
+      .post("/api/usuarios")
+      .set(as(adminToken))
+      .send({
+        nombre: "Persona con salario",
+        email,
+        password: "contrasenaSegura123",
+        rol: "empleado",
+        cargo: "barista",
+        salario: 1_800_000,
+      })
+      .expect(201);
+
+    const response = await request(app).get("/api/empleados").set(as(adminToken)).expect(200);
+    const creado = response.body.empleados.find((empleado: { email: string }) => empleado.email === email);
+    expect(creado).toMatchObject({ cargo: "barista", salario: 1_800_000 });
+
+    const usuario = await prisma.usuario.findUniqueOrThrow({ where: { email } });
+    await prisma.empleado.delete({ where: { usuarioId: usuario.id } });
+    await prisma.usuario.delete({ where: { id: usuario.id } });
+  });
+});
+
+describe("POST /api/productos", () => {
+  it("la dirección crea un servicio y queda en el catálogo", async () => {
+    const nombre = `Servicio de prueba ${suffix}`;
+    const response = await request(app)
+      .post("/api/productos")
+      .set(as(adminToken))
+      .send({ nombre, categoria: "servicio", precio: 35_000, descripcion: "Alquiler por hora" })
+      .expect(201);
+    expect(response.body.id).toBeGreaterThan(0);
+
+    const lista = await request(app).get("/api/productos?pageSize=100").set(as(adminToken)).expect(200);
+    const creado = lista.body.productos.find((producto: { nombre: string }) => producto.nombre === nombre);
+    expect(creado).toMatchObject({ categoria: "servicio", precio: 35_000, esAlcohol: false });
+
+    await prisma.producto.delete({ where: { id: response.body.id as number } });
+  });
+
+  it("rechaza un nombre repetido", async () => {
+    await request(app)
+      .post("/api/productos")
+      .set(as(adminToken))
+      .send({ nombre: "Americano", categoria: "bebida", precio: 1000 })
+      .expect(409);
+  });
+
+  it("rechaza un precio negativo", async () => {
+    await request(app)
+      .post("/api/productos")
+      .set(as(adminToken))
+      .send({ nombre: `Precio malo ${suffix}`, categoria: "bebida", precio: -1 })
+      .expect(422);
+  });
+
+  it("un cliente no puede crear productos", async () => {
+    await request(app)
+      .post("/api/productos")
+      .set(as(clienteToken))
+      .send({ nombre: `Cliente ${suffix}`, categoria: "bebida", precio: 1000 })
+      .expect(403);
+  });
+});

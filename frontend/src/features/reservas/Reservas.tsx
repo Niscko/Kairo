@@ -111,7 +111,9 @@ export function Reservas() {
         id: "acciones",
         header: t("common.acciones"),
         cell: ({ row }: { row: { original: Reserva } }) =>
-          row.original.estado === "cancelada" || row.original.estado === "completada" ? null : (
+          row.original.estado === "cancelada" ||
+          row.original.estado === "completada" ||
+          row.original.proposito === "evento" ? null : (
             <Button
               variant="ghost"
               size="icon"
