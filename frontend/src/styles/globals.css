@@ -7,11 +7,20 @@
 @layer base {
   * {
     @apply border-border;
+    /* Barras de desplazamiento discretas, con los colores del tema. */
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--muted-foreground) / 0.4) transparent;
   }
 
   html {
     /* Evita el salto horizontal al abrir modales en móvil. */
     scrollbar-gutter: stable;
+    /* Sin esto el navegador pinta la barra con su tema oscuro del sistema. */
+    color-scheme: light;
+  }
+
+  html.dark {
+    color-scheme: dark;
   }
 
   body {
