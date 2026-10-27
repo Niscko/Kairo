@@ -1,0 +1,20 @@
+# Patrones que aceleran el build al no copiar dependencias ya instaladas.
+node_modules
+dist
+coverage
+
+# Secretos: nunca deben entrar al contexto de build.
+.env
+.env.*
+!.env.example
+
+# Tests y artefactos de desarrollo.
+tests
+**/*.test.ts
+vitest.config.ts
+eslint.config.cjs
+.prettierrc.json
+
+Dockerfile
+.dockerignore
+README.md

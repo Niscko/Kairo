@@ -1,0 +1,498 @@
+// Kairo — modelo de datos
+// Fuente de verdad del dominio. Las migraciones en prisma/migrations son el historial ejecutable.
+
+generator client {
+  provider = "prisma-client-js"
+  // "native" cubre el desarrollo en el host; el segundo objetivo es
+  // obligatorio porque la imagen de producción usa Alpine (musl) con
+  // OpenSSL 3, y sin él Prisma no encuentra el motor de consulta al arrancar.
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Enums (antes CHECK constraints en SQLite)
+// ---------------------------------------------------------------------------
+
+enum Rol {
+  admin
+  empleado
+  cliente
+}
+
+enum TipoEspacio {
+  puesto
+  sala
+  mesa
+  evento
+}
+
+enum EstadoEspacio {
+  disponible
+  mantenimiento
+}
+
+enum PropositoReserva {
+  trabajo
+  estudio
+  reunion
+  consumo
+  evento
+}
+
+enum EstadoReserva {
+  confirmada
+  en_curso
+  completada
+  cancelada
+}
+
+enum TipoMembresia {
+  ninguna
+  dia
+  mensual
+}
+
+enum CategoriaProducto {
+  bebida
+  alimento
+  servicio
+}
+
+enum MetodoPago {
+  efectivo
+  tarjeta
+  transferencia
+}
+
+enum TipoMovimiento {
+  entrada
+  salida
+  merma
+}
+
+enum TipoEquipo {
+  tecnologico
+  mobiliario
+  produccion
+  administracion
+}
+
+enum EstadoEquipo {
+  operativo
+  mantenimiento
+  prestado
+}
+
+enum EstadoExperiencia {
+  programada
+  en_curso
+  finalizada
+  cancelada
+}
+
+enum EstadoCosto {
+  pendiente
+  pagado
+}
+
+enum EstadoPermiso {
+  vigente
+  vencido
+}
+
+// ---------------------------------------------------------------------------
+// Identidad y personas
+// ---------------------------------------------------------------------------
+
+model Usuario {
+  id            Int       @id @default(autoincrement())
+  nombre        String
+  email         String    @unique
+  passwordHash  String    @map("password_hash")
+  rol           Rol
+  telefono      String?
+  activo        Boolean   @default(true)
+  creadoEn      DateTime  @default(now()) @map("creado_en")
+  actualizadoEn DateTime  @updatedAt @map("actualizado_en")
+
+  empleado     Empleado?
+  cliente      Cliente?
+  recuperaciones Recuperacion[]
+  sesionesRefresh SesionRefresh[]
+
+  @@map("usuarios")
+}
+
+model Recuperacion {
+  id         Int      @id @default(autoincrement())
+  usuarioId  Int      @map("usuario_id")
+  codigoHash String   @map("codigo_hash")
+  creado     DateTime @default(now())
+  expira     DateTime
+  intentos   Int      @default(0)
+  usado      Boolean  @default(false)
+
+  usuario Usuario @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+
+  @@index([usuarioId, usado])
+  @@map("recuperaciones")
+}
+
+/// Refresh tokens rotativos. `tokenHash` nunca se almacena en claro.
+/// `reemplazadoPorId` encadena la familia para detectar reuso de tokens.
+model SesionRefresh {
+  id              Int       @id @default(autoincrement())
+  usuarioId       Int       @map("usuario_id")
+  tokenHash       String    @unique @map("token_hash")
+  familia         String
+  creado          DateTime  @default(now())
+  expira          DateTime
+  revocado        DateTime?
+  reemplazadoPorId Int?     @map("reemplazado_por_id")
+  userAgent       String?   @map("user_agent")
+
+  usuario        Usuario         @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  reemplazadoPor SesionRefresh?  @relation("RotacionRefresh", fields: [reemplazadoPorId], references: [id])
+  reemplaza      SesionRefresh[] @relation("RotacionRefresh")
+
+  @@index([usuarioId, revocado])
+  @@index([familia])
+  @@map("sesiones_refresh")
+}
+
+model Empleado {
+  id          Int      @id @default(autoincrement())
+  usuarioId   Int      @unique @map("usuario_id")
+  cargo       String
+  salario     Int
+  fechaIngreso DateTime @map("fecha_ingreso")
+  activo      Boolean  @default(true)
+
+  usuario          Usuario           @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  turnos           Turno[]
+  ventas           Venta[]
+  experienciaEmpleados ExperienciaEmpleado[]
+
+  @@map("empleados")
+}
+
+model Cliente {
+  id             Int          @id @default(autoincrement())
+  usuarioId      Int          @unique @map("usuario_id")
+  documento      String?
+  membresia      TipoMembresia @default(ninguna)
+  membresiaVence DateTime?    @map("membresia_vence")
+
+  usuario             Usuario               @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  reservas            Reserva[]
+  ventas              Venta[]
+  experienciaParticipantes ExperienciaParticipante[]
+
+  @@map("clientes")
+}
+
+// ---------------------------------------------------------------------------
+// Espacios y reservas
+// ---------------------------------------------------------------------------
+
+model Espacio {
+  id         Int           @id @default(autoincrement())
+  nombre     String
+  tipo       TipoEspacio
+  capacidad  Int
+  tarifaHora Int           @map("tarifa_hora")
+  zona       String
+  estado     EstadoEspacio @default(disponible)
+
+  reservas     Reserva[]
+  equipos       Equipo[]
+  experiencias   Experiencia[]
+
+  @@map("espacios")
+}
+
+model Reserva {
+  id        Int           @id @default(autoincrement())
+  espacioId Int           @map("espacio_id")
+  clienteId Int?          @map("cliente_id")
+  inicio    DateTime
+  fin       DateTime
+  proposito PropositoReserva
+  estado    EstadoReserva
+  monto     Int           @default(0)
+  notas     String?
+  creadoEn  DateTime      @default(now()) @map("creado_en")
+
+  espacio     Espacio       @relation(fields: [espacioId], references: [id], onDelete: Restrict)
+  cliente     Cliente?      @relation(fields: [clienteId], references: [id], onDelete: SetNull)
+  experiencias Experiencia[]
+
+  @@index([espacioId, inicio, fin])
+  @@index([clienteId, inicio])
+  @@index([estado, inicio])
+  @@map("reservas")
+}
+
+// ---------------------------------------------------------------------------
+// Cafetería: proveedores, insumos, productos, recetas, ventas
+// ---------------------------------------------------------------------------
+
+model Proveedor {
+  id        Int    @id @default(autoincrement())
+  nombre    String
+  contacto  String?
+  telefono  String?
+  categoria String
+
+  insumos Insumo[]
+
+  @@map("proveedores")
+}
+
+model Insumo {
+  id            Int     @id @default(autoincrement())
+  nombre        String  @unique
+  /// Unidad en que se mide el stock (g, ml, un).
+  unidad        String
+  stock         Float   @default(0)
+  stockMinimo   Float   @default(0) @map("stock_minimo")
+  /// Costo por la unidad de compra, en centavos.
+  costoUnitario Int     @map("costo_unitario")
+  /// Unidad en que se compra el insumo: "kg", "L", "unidad".
+  unidadCompra  String  @default("unidad") @map("unidad_compra")
+  /// Cuántas unidades de stock contiene una unidad de compra.
+  ///
+  /// Sin esto, un café que se compra por kilo (costo 4200) y se consume por
+  /// gramo (18 g) costaría 75.600 en vez de 75,60. El factor convierte entre
+  /// ambas unidades: 1 kg = 1000 g.
+  factorConversion Float @default(1) @map("factor_conversion")
+  proveedorId   Int?    @map("proveedor_id")
+
+  proveedor        Proveedor?             @relation(fields: [proveedorId], references: [id], onDelete: SetNull)
+  recetaItems      RecetaItem[]
+  movimientos      MovimientoInventario[]
+
+  @@index([proveedorId])
+  @@map("insumos")
+}
+
+model Producto {
+  id          Int              @id @default(autoincrement())
+  nombre      String           @unique
+  categoria   CategoriaProducto
+  precio      Int
+  descripcion String?
+  esAlcohol   Boolean          @default(false) @map("es_alcohol")
+  activo      Boolean          @default(true)
+
+  recetaItems          RecetaItem[]
+  ventaItems           VentaItem[]
+  experienciaProductos ExperienciaProducto[]
+
+  @@index([categoria, activo])
+  @@map("productos")
+}
+
+/// Un producto y la cantidad de un insumo necesaria para producirlo.
+model RecetaItem {
+  productoId Int   @map("producto_id")
+  insumoId   Int   @map("insumo_id")
+  cantidad   Float
+
+  producto Producto @relation(fields: [productoId], references: [id], onDelete: Cascade)
+  insumo   Insumo   @relation(fields: [insumoId], references: [id], onDelete: Cascade)
+
+  @@id([productoId, insumoId])
+  @@map("recetas")
+}
+
+model Venta {
+  id         Int        @id @default(autoincrement())
+  clienteId  Int?       @map("cliente_id")
+  /// Nullable: una venta registrada por el propio cliente no tiene empleado.
+  empleadoId Int?       @map("empleado_id")
+  fecha      DateTime
+  metodoPago MetodoPago @map("metodo_pago")
+  total      Int
+  creadoEn   DateTime   @default(now()) @map("creado_en")
+
+  cliente  Cliente?    @relation(fields: [clienteId], references: [id], onDelete: SetNull)
+  empleado Empleado?   @relation(fields: [empleadoId], references: [id], onDelete: SetNull)
+  items    VentaItem[]
+
+  @@index([fecha])
+  @@index([clienteId, fecha])
+  @@index([empleadoId, fecha])
+  @@map("ventas")
+}
+
+model VentaItem {
+  id         Int   @id @default(autoincrement())
+  ventaId    Int   @map("venta_id")
+  productoId Int   @map("producto_id")
+  cantidad   Int
+  precio     Int
+
+  venta    Venta    @relation(fields: [ventaId], references: [id], onDelete: Cascade)
+  producto Producto @relation(fields: [productoId], references: [id], onDelete: Restrict)
+
+  @@index([ventaId])
+  @@index([productoId])
+  @@map("venta_items")
+}
+
+model MovimientoInventario {
+  id        Int            @id @default(autoincrement())
+  insumoId  Int            @map("insumo_id")
+  tipo      TipoMovimiento
+  cantidad  Float
+  motivo    String?
+  fecha     DateTime
+  referencia String?
+
+  insumo Insumo @relation(fields: [insumoId], references: [id], onDelete: Cascade)
+
+  @@index([insumoId, fecha])
+  @@index([tipo, fecha])
+  @@map("movimientos_inventario")
+}
+
+// ---------------------------------------------------------------------------
+// Equipos y experiencias
+// ---------------------------------------------------------------------------
+
+model Equipo {
+  id        Int         @id @default(autoincrement())
+  nombre    String
+  tipo      TipoEquipo
+  estado    EstadoEquipo @default(operativo)
+  espacioId Int?        @map("espacio_id")
+  costo     Int         @default(0)
+
+  espacio Espacio?            @relation(fields: [espacioId], references: [id], onDelete: SetNull)
+  experienciaEquipos ExperienciaEquipo[]
+
+  @@index([espacioId])
+  @@index([estado])
+  @@map("equipos")
+}
+
+model Experiencia {
+  id          Int              @id @default(autoincrement())
+  nombre      String
+  descripcion String?
+  espacioId   Int              @map("espacio_id")
+  reservaId   Int?             @map("reserva_id")
+  inicio      DateTime
+  fin         DateTime
+  capacidad   Int
+  precio      Int
+  estado      EstadoExperiencia
+
+  espacio      Espacio                @relation(fields: [espacioId], references: [id], onDelete: Restrict)
+  reserva      Reserva?               @relation(fields: [reservaId], references: [id], onDelete: SetNull)
+  empleados    ExperienciaEmpleado[]
+  equipos      ExperienciaEquipo[]
+  productos    ExperienciaProducto[]
+  participantes ExperienciaParticipante[]
+
+  @@index([espacioId])
+  @@index([estado, inicio])
+  @@index([inicio, fin])
+  @@map("experiencias")
+}
+
+model ExperienciaEmpleado {
+  experienciaId Int @map("experiencia_id")
+  empleadoId    Int @map("empleado_id")
+
+  experiencia Experiencia @relation(fields: [experienciaId], references: [id], onDelete: Cascade)
+  empleado    Empleado    @relation(fields: [empleadoId], references: [id], onDelete: Cascade)
+
+  @@id([experienciaId, empleadoId])
+  @@map("experiencia_empleados")
+}
+
+model ExperienciaEquipo {
+  experienciaId Int @map("experiencia_id")
+  equipoId      Int @map("equipo_id")
+
+  experiencia Experiencia @relation(fields: [experienciaId], references: [id], onDelete: Cascade)
+  equipo      Equipo      @relation(fields: [equipoId], references: [id], onDelete: Cascade)
+
+  @@id([experienciaId, equipoId])
+  @@map("experiencia_equipos")
+}
+
+model ExperienciaProducto {
+  experienciaId Int @map("experiencia_id")
+  productoId    Int @map("producto_id")
+  cantidad      Int
+
+  experiencia Experiencia @relation(fields: [experienciaId], references: [id], onDelete: Cascade)
+  producto    Producto    @relation(fields: [productoId], references: [id], onDelete: Cascade)
+
+  @@id([experienciaId, productoId])
+  @@map("experiencia_productos")
+}
+
+model ExperienciaParticipante {
+  experienciaId Int @map("experiencia_id")
+  clienteId     Int @map("cliente_id")
+
+  experiencia Experiencia @relation(fields: [experienciaId], references: [id], onDelete: Cascade)
+  cliente     Cliente     @relation(fields: [clienteId], references: [id], onDelete: Cascade)
+
+  @@id([experienciaId, clienteId])
+  @@map("experiencia_participantes")
+}
+
+// ---------------------------------------------------------------------------
+// Operación: costos, permisos, turnos
+// ---------------------------------------------------------------------------
+
+model Costo {
+  id        Int         @id @default(autoincrement())
+  concepto  String
+  categoria String
+  monto     Int
+  periodo   String
+  vencimiento DateTime?
+  estado    EstadoCosto
+
+  @@index([periodo, categoria])
+  @@index([estado, vencimiento])
+  @@map("costos")
+}
+
+model Permiso {
+  id        Int          @id @default(autoincrement())
+  nombre    String
+  entidad   String
+  numero    String?
+  vencimiento DateTime
+  estado     EstadoPermiso
+
+  @@index([estado, vencimiento])
+  @@map("permisos")
+}
+
+model Turno {
+  id         Int      @id @default(autoincrement())
+  empleadoId Int      @map("empleado_id")
+  fecha      DateTime
+  horaInicio String   @map("hora_inicio")
+  horaFin    String   @map("hora_fin")
+  area       String
+
+  empleado Empleado @relation(fields: [empleadoId], references: [id], onDelete: Cascade)
+
+  @@index([empleadoId, fecha])
+  @@index([fecha])
+  @@map("turnos")
+}
