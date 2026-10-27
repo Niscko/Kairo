@@ -51,6 +51,22 @@ export interface Paginado<T> {
   totalPaginas: number;
 }
 
+export type AccionRegistro = "crear" | "actualizar" | "eliminar";
+
+/** Fila de la bitácora de altas, cambios y bajas. */
+export interface RegistroActividad {
+  id: number;
+  creadoEn: string;
+  actorNombre: string;
+  actorEmail: string;
+  actorRol: Rol | null;
+  accion: AccionRegistro;
+  entidad: string;
+  entidadId: string | null;
+  resumen: string;
+  detalle: Record<string, string | number | boolean | null> | null;
+}
+
 export interface Reserva {
   id: number;
   espacioId: number;

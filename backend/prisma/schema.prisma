@@ -124,6 +124,7 @@ model Usuario {
   cliente      Cliente?
   recuperaciones Recuperacion[]
   sesionesRefresh SesionRefresh[]
+  registrosActividad RegistroActividad[]
 
   @@map("usuarios")
 }
@@ -495,4 +496,36 @@ model Turno {
   @@index([empleadoId, fecha])
   @@index([fecha])
   @@map("turnos")
+}
+
+// ---------------------------------------------------------------------------
+// Auditoría: altas, cambios y bajas hechas por un usuario autenticado.
+// El actor se copia en la fila para que el registro siga siendo legible
+// si la cuenta se borra después.
+// ---------------------------------------------------------------------------
+
+enum AccionRegistro {
+  crear
+  actualizar
+  eliminar
+}
+
+model RegistroActividad {
+  id          Int            @id @default(autoincrement())
+  creadoEn    DateTime       @default(now()) @map("creado_en")
+  usuarioId   Int?           @map("usuario_id")
+  actorNombre String         @map("actor_nombre")
+  actorEmail  String         @map("actor_email")
+  actorRol    Rol?           @map("actor_rol")
+  accion      AccionRegistro
+  entidad     String
+  entidadId   String?        @map("entidad_id")
+  resumen     String
+  detalle     Json?
+
+  usuario Usuario? @relation(fields: [usuarioId], references: [id], onDelete: SetNull)
+
+  @@index([creadoEn])
+  @@index([entidad, creadoEn])
+  @@map("registros_actividad")
 }

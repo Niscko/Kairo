@@ -7,6 +7,7 @@ import helmet from "helmet";
 import { config } from "./config/env.js";
 import { logger } from "./config/logger.js";
 import { ForbiddenError } from "./lib/errors.js";
+import { registrarActividad } from "./middleware/auditoria.js";
 import { errorHandler, notFoundHandler } from "./middleware/error.js";
 import { apiRateLimiter } from "./middleware/rate-limit.js";
 import { agendaRouter } from "./modules/agenda/routes.js";
@@ -26,6 +27,7 @@ import { healthRouter } from "./modules/health/routes.js";
 import { costosRouter, equiposRouter, permisosRouter } from "./modules/operaciones/routes.js";
 import { pedidosRouter } from "./modules/pedidos/routes.js";
 import { reservasRouter } from "./modules/reservas/routes.js";
+import { registrosRouter } from "./modules/registros/routes.js";
 import { reportesRouter } from "./modules/reportes/routes.js";
 import { empleadosRouter, turnosRouter } from "./modules/turnos/routes.js";
 import { usuariosRouter } from "./modules/usuarios/routes.js";
@@ -89,6 +91,8 @@ export function createApp(): Express {
   // El límite general va antes de las rutas: la documentación promete 100
   // peticiones por ventana en el resto de la API, no solo en `/auth`.
   app.use("/api", apiRateLimiter);
+  // Después del parser de JSON y del límite: así ve el cuerpo y el estado final.
+  app.use(registrarActividad());
 
   app.use("/api/health", healthRouter());
   app.use("/api/auth", authRouter());
@@ -111,6 +115,7 @@ export function createApp(): Express {
   app.use("/api/costos", costosRouter());
   app.use("/api/permisos", permisosRouter());
   app.use("/api/reportes", reportesRouter());
+  app.use("/api/registros", registrosRouter());
   app.use("/api/exportaciones", exportacionesRouter());
 
   app.use(notFoundHandler);

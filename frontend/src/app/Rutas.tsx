@@ -19,6 +19,7 @@ import { Ventas } from "@/features/ventas/Ventas";
 import { Operacion } from "@/features/operacion/Operacion";
 import { Pedir } from "@/features/pedir/Pedir";
 import { Reportes } from "@/features/reportes/Reportes";
+import { Registros } from "@/features/registros/Registros";
 
 /**
  * Protege una ruta exigiendo sesión. Guarda la ruta solicitada para volver a
@@ -102,6 +103,14 @@ export function Rutas() {
           element={
             <Privada roles={["admin"]}>
               <Reportes />
+            </Privada>
+          }
+        />
+        <Route
+          path="registros"
+          element={
+            <Privada roles={["admin"]}>
+              <Registros />
             </Privada>
           }
         />
