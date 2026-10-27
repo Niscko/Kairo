@@ -1,0 +1,108 @@
+name: kairo
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: kairo-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-kairo}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-kairo_dev_password}
+      POSTGRES_DB: ${POSTGRES_DB:-kairo}
+      # Checksums de páginas: detectan corrupción silenciosa en disco.
+      POSTGRES_INITDB_ARGS: "--data-checksums"
+      # Una única zona horaria para base, API y web. Si difieren, las fechas
+      # locales se desplazan un día entre procesos.
+      TZ: ${TZ:-America/Bogota}
+    ports:
+      # Expuesto al host para Prisma Studio y herramientas de administración.
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-kairo} -d ${POSTGRES_DB:-kairo}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - kairo-net
+
+  backend:
+    build:
+      # El contexto es la raíz porque pnpm necesita el lockfile del workspace.
+      context: .
+      dockerfile: docker/backend.Dockerfile
+    container_name: kairo-backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # El contenedor siempre corre como producción; el .env del host solo
+      # aporta credenciales y parámetros.
+      NODE_ENV: production
+      PORT: "3001"
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      # Debe coincidir con la zona horaria de la base de datos: si difieren,
+      # una fecha local se guarda desplazada un día.
+      TZ: ${TZ:-America/Bogota}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8080,http://localhost:5173}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-kairo}:${POSTGRES_PASSWORD:-kairo_dev_password}@db:5432/${POSTGRES_DB:-kairo}?schema=public
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?define JWT_ACCESS_SECRET en .env}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?define JWT_REFRESH_SECRET en .env}
+      JWT_ACCESS_TTL: ${JWT_ACCESS_TTL:-15m}
+      JWT_REFRESH_TTL: ${JWT_REFRESH_TTL:-7d}
+      BCRYPT_COST: ${BCRYPT_COST:-12}
+      CSRF_SECRET: ${CSRF_SECRET:?define CSRF_SECRET en .env}
+      RATE_LIMIT_WINDOW_MS: ${RATE_LIMIT_WINDOW_MS:-900000}
+      RATE_LIMIT_MAX: ${RATE_LIMIT_MAX:-100}
+      AUTH_RATE_LIMIT_MAX: ${AUTH_RATE_LIMIT_MAX:-10}
+      # La suite e2e hace muchas peticiones desde la misma IP: con el límite
+      # normal, el rate limit de login bloquearía la prueba.
+      RELAJAR_RATE_LIMIT: ${RELAJAR_RATE_LIMIT:-false}
+    ports:
+      - "${BACKEND_PORT:-3001}:3001"
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3001/api/health/live').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    networks:
+      - kairo-net
+
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/frontend.Dockerfile
+      args:
+        # El cliente necesita la URL del API en tiempo de build.
+        VITE_API_URL: ${VITE_API_URL:-http://localhost:3001}
+    container_name: kairo-frontend
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "${FRONTEND_PORT:-8080}:80"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      - kairo-net
+
+volumes:
+  pgdata:
+    driver: local
+
+networks:
+  kairo-net:
+    driver: bridge

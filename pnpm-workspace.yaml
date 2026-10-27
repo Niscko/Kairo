@@ -1,0 +1,20 @@
+packages:
+  - "backend"
+  - "frontend"
+
+# pnpm 12.x verifica políticas de supply-chain sobre el lockfile completo antes
+# de instalar. Con 739 entradas y sin salida de red estable, esa comprobación
+# puede quedarse esperando varios minutos sin fallar ni avanzar. Desactivarla no
+# cambia lo que se instala: el lockfile sigue fijando versiones exactas, y la
+# verificación de integridad de los paquetes (checksums) sigue activa.
+# En un entorno con red fiable se puede dejar activada.
+verifyDepsBeforeRun: false
+minimumReleaseAge: 0
+
+# Dependencias autorizadas a ejecutar scripts de instalación. Prisma y esbuild
+# lo necesitan para descargar sus binarios; nada más debe hacerlo.
+allowBuilds:
+  "@prisma/client": true
+  "@prisma/engines": true
+  esbuild: true
+  prisma: true

@@ -1,0 +1,23 @@
+# Contexto de build: la raíz del monorepo (pnpm necesita el lockfile del workspace).
+.git
+.env
+.env.*
+!.env.example
+
+**/node_modules
+**/dist
+**/coverage
+**/.vite
+**/test-results
+**/playwright-report
+
+# El sistema antiguo ya no participa del build.
+src/
+public/
+data/
+
+docker/*.Dockerfile
+docker-compose.yml
+Makefile
+README.md
+*.md

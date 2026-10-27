@@ -1,3 +1,42 @@
+# Dependencias
 node_modules/
-data/
+
+# Artefactos de build
+dist/
+build/
+coverage/
+*.tsbuildinfo
+
+# Secretos: nunca se commitean. Solo .env.example va al repositorio.
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# Artefactos locales de desarrollo
+.vite/
+*.db
+*.db-wal
+*.db-shm
+
+# Pruebas
+playwright-report/
+test-results/
+blob-report/
+.playwright/
+screenshots/
+
+# Editores y sistema operativo
 .DS_Store
+Thumbs.db
+.idea/
+*.swp
+
+# Logs
+*.log
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Git
+.git

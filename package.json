@@ -4,13 +4,16 @@
   "private": true,
   "description": "Sistema de información para un establecimiento híbrido de coworking, cafetería y experiencias.",
   "scripts": {
-    "start": "node src/server.js",
-    "reset": "rm -f data/kairo.db data/kairo.db-wal data/kairo.db-shm"
+    "dev": "pnpm -r --parallel dev",
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "lint": "pnpm -r lint",
+    "test": "pnpm -r test",
+    "format": "pnpm -r format"
   },
-  "dependencies": {
-    "bcryptjs": "^2.4.3",
-    "better-sqlite3": "^11.10.0",
-    "express": "^4.21.2",
-    "express-session": "^1.18.1"
-  }
+  "engines": {
+    "node": ">=20.11.0",
+    "pnpm": ">=9"
+  },
+  "packageManager": "pnpm@12.14.0"
 }
